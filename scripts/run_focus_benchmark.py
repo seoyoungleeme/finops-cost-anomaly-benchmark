@@ -13,9 +13,9 @@ Output files (all in outputs/results/):
   focus_calibration_stats.csv          calibration parameters per service
   focus_metrics_<service>.csv          raw metrics per service (all seeds/budgets)
   focus_events_<service>.csv           event-level results per service
-  focus_benchmark_summary.csv          one-row-per-service with F1/AUPRC/etc.
+  focus_service_summary.csv            one-row-per-service averaged across models & seeds
   focus_core_metrics_by_service.csv    mean +/- std of key metrics per service x model
-  focus_rank_reversal_by_service.csv   model rank per service (detect rank reversals)
+  focus_rank_reversal_by_service.csv   model rank per service for 4 metrics (detect reversals)
   focus_overall_model_ranking.csv      aggregated model ranking across all services
 
 Usage
@@ -68,20 +68,42 @@ def _build_rank_reversal_table(
     per_service_metrics: dict,
     budget: float = _EVAL_BUDGET,
 ) -> pd.DataFrame:
-    """Build a table showing model rank per service to surface rank reversals."""
+    """Build per-service model ranks across 4 metrics to surface rank reversals.
+
+    Ranking directions:
+      f1, cost_weighted_recall, alert_cost_efficiency : higher is better (rank 1 = highest)
+      mean_mctd                                       : lower is better  (rank 1 = lowest)
+    """
+    _RANK_METRICS = {
+        "f1": (False, "f1_rank"),                              # ascending=False → higher wins
+        "cost_weighted_recall": (False, "dollar_recall_rank"),
+        "alert_cost_efficiency": (False, "ace_rank"),
+        "mean_mctd": (True, "mctd_rank"),                      # ascending=True  → lower wins
+    }
+
     rows = []
     for service, metrics_df in per_service_metrics.items():
         sub = metrics_df[metrics_df["budget"] == budget]
-        f1_means = sub.groupby("model_name")["f1"].mean()
-        ranks = f1_means.rank(ascending=False, method="min").astype(int)
-        for model in f1_means.index:
-            rows.append({
-                "service": service,
-                "model_name": model,
-                "f1_mean": round(float(f1_means[model]), 4),
-                "f1_rank": int(ranks[model]),
-            })
-    return pd.DataFrame(rows)
+        means = sub.groupby("model_name")[list(_RANK_METRICS)].mean()
+
+        for model in means.index:
+            row: dict = {"service": service, "model_name": model}
+            for metric, (asc, rank_col) in _RANK_METRICS.items():
+                val = float(means.loc[model, metric])
+                rank = int(means[metric].rank(ascending=asc, method="min")[model])
+                row[f"{metric}_mean"] = round(val, 4)
+                row[rank_col] = rank
+            rows.append(row)
+
+    col_order = [
+        "service", "model_name",
+        "f1_mean", "f1_rank",
+        "cost_weighted_recall_mean", "dollar_recall_rank",
+        "alert_cost_efficiency_mean", "ace_rank",
+        "mean_mctd_mean", "mctd_rank",
+    ]
+    df = pd.DataFrame(rows)
+    return df[col_order] if not df.empty else df
 
 
 def main(args: argparse.Namespace) -> None:
@@ -98,7 +120,13 @@ def main(args: argparse.Namespace) -> None:
     # 2. Aggregate
     group_by = [g.strip() for g in args.group_by.split(",")]
     print(f"\nStep 2/5  Aggregating daily cost by {group_by}...")
-    daily_dict = aggregate_daily(raw_df, group_by=group_by)
+    daily_dict = aggregate_daily(
+        raw_df,
+        group_by=group_by,
+        min_days=args.min_days,
+        min_nonzero_days=args.min_nonzero_days,
+        min_mean_cost=args.min_mean_cost,
+    )
     print(f"  Service groups (after filtering): {len(daily_dict)}")
     for lbl, s in daily_dict.items():
         print(
@@ -186,9 +214,9 @@ def main(args: argparse.Namespace) -> None:
     # 5. Cross-service summary tables
     print("\nStep 5/5  Building cross-service summary tables...")
 
-    # focus_benchmark_summary.csv
+    # focus_service_summary.csv — one row per service, averaged across models & seeds
     pd.DataFrame(summary_rows).to_csv(
-        output_dir / "focus_benchmark_summary.csv", index=False
+        output_dir / "focus_service_summary.csv", index=False
     )
 
     # focus_core_metrics_by_service.csv  (per-service x model mean +/- std)
@@ -233,5 +261,17 @@ if __name__ == "__main__":
         help="Comma-separated FOCUS columns to group by (e.g. ProviderName,ServiceCategory)",
     )
     parser.add_argument("--n-seeds", type=int, default=5, help="Number of random seeds")
+    parser.add_argument(
+        "--min-days", type=int, default=21,
+        help="Min calendar days a service group must have to pass filtering",
+    )
+    parser.add_argument(
+        "--min-nonzero-days", type=int, default=14,
+        help="Min days with cost > 0 a service group must have",
+    )
+    parser.add_argument(
+        "--min-mean-cost", type=float, default=1.0,
+        help="Min mean daily cost (in billing currency) for a service group",
+    )
     parser.add_argument("--verbose", action="store_true")
     main(parser.parse_args())
