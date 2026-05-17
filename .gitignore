@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 .tmp/
+.focus_cache/
+.claude/settings.local.json
+data/external/
+data/processed/
 outputs/
 
 # C extensions
