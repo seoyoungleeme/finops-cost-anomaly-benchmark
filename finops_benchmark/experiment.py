@@ -3,17 +3,33 @@
 import numpy as np
 import pandas as pd
 
-from .config import (
-    BUDGETS,
-    EVENT_KEEP_COLS,
-    METRIC_COLS,
-    N_DAYS,
-    START_DATE,
-    YEAR2_START,
-)
-from .data import build_dataset
-from .evaluation import run_evaluation
-from .models import run_all_models
+try:
+    from .config import (
+        BUDGETS,
+        EVENT_KEEP_COLS,
+        METRIC_COLS,
+        N_DAYS,
+        START_DATE,
+        YEAR2_START,
+    )
+    from .data import build_dataset, build_focus_calibrated_dataset
+    from .evaluation import run_evaluation
+    from .models import run_all_models
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import (
+        BUDGETS,
+        EVENT_KEEP_COLS,
+        METRIC_COLS,
+        N_DAYS,
+        START_DATE,
+        YEAR2_START,
+    )
+    from data import build_dataset, build_focus_calibrated_dataset
+    from evaluation import run_evaluation
+    from models import run_all_models
 
 def run_one_seed(seed, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False):
     """
@@ -220,6 +236,63 @@ def build_rank_comparison(all_metrics_df, budget=0.01):
     out["alert_cost_efficiency"] = out["alert_cost_efficiency"].round(2)
     out["mean_mctd"] = out["mean_mctd"].round(2)
     return out
+
+
+def run_one_seed_focus(seed, stats, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False):
+    """Like ``run_one_seed`` but uses a FOCUS-calibrated dataset.
+
+    Parameters
+    ----------
+    seed : int
+    stats : dict  – output of ``focus_calibration.fit_series_statistics``
+    year2_start, budgets, verbose : same as ``run_one_seed``
+    """
+    if verbose:
+        print(f"[seed={seed}] generating FOCUS-calibrated data and scoring all models ...")
+
+    df_s, events_table_s = build_focus_calibrated_dataset(
+        stats=stats, seed=seed, n_days=N_DAYS,
+        year2_start=year2_start, start_date=START_DATE,
+    )
+    scores_s, _aux = run_all_models(
+        df_s, events_table_s, seed=seed, year2_start=year2_start, verbose=False,
+    )
+
+    metric_parts = []
+    event_parts = []
+    for budget, q in budgets:
+        _pred_s, met_s, ev_s = run_evaluation(
+            df_s, events_table_s, scores_s, year2_start=year2_start, percentile=q,
+        )
+        met_s = met_s.copy()
+        met_s.insert(0, "seed", seed)
+        met_s.insert(1, "budget", budget)
+        met_s.insert(2, "threshold_quantile", q)
+        ev_s = ev_s.copy()
+        ev_s.insert(0, "seed", seed)
+        ev_s.insert(1, "budget", budget)
+        metric_parts.append(met_s)
+        event_parts.append(ev_s)
+
+    return (
+        pd.concat(metric_parts, axis=0, ignore_index=True),
+        pd.concat(event_parts, axis=0, ignore_index=True),
+    )
+
+
+def run_multi_seed_focus(seeds, stats, budgets=BUDGETS, year2_start=YEAR2_START):
+    """Run ``run_one_seed_focus`` over multiple seeds and concatenate results."""
+    all_metrics_parts = []
+    all_events_parts = []
+    for seed in seeds:
+        metrics_s, events_s = run_one_seed_focus(
+            seed=seed, stats=stats, budgets=budgets, year2_start=year2_start,
+        )
+        all_metrics_parts.append(metrics_s)
+        all_events_parts.append(events_s)
+    all_model_metrics_df = pd.concat(all_metrics_parts, axis=0, ignore_index=True)
+    all_event_results_df = pd.concat(all_events_parts, axis=0, ignore_index=True)[EVENT_KEEP_COLS]
+    return all_model_metrics_df, all_event_results_df
 
 
 def run_multi_seed(seeds, budgets=BUDGETS, year2_start=YEAR2_START):

@@ -1,9 +1,55 @@
 """Anomaly scoring models used by the benchmark."""
 
+import os
+import tempfile
+from contextlib import contextmanager
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-from .config import RANDOM_SEED, YEAR2_START
+try:
+    from .config import RANDOM_SEED, YEAR2_START
+except ImportError:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import RANDOM_SEED, YEAR2_START
+
+
+@contextmanager
+def _ascii_tempdir_for_cmdstan():
+    """Force CmdStanPy temp files away from non-ASCII user paths on Windows."""
+    tmp_dir = Path.cwd() / ".tmp" / "cmdstanpy_tmp"
+    out_dir = Path.cwd() / ".tmp" / "cmdstanpy_output"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    old_env = {key: os.environ.get(key) for key in ("TMP", "TEMP", "TMPDIR")}
+    old_tempdir = tempfile.tempdir
+    old_cmdstan_tmpdir = None
+    cmdstan_filesystem = None
+    try:
+        for key in old_env:
+            os.environ[key] = str(tmp_dir)
+        tempfile.tempdir = str(tmp_dir)
+
+        try:
+            import cmdstanpy.utils.filesystem as cmdstan_filesystem
+            old_cmdstan_tmpdir = cmdstan_filesystem._TMPDIR
+            cmdstan_filesystem._TMPDIR = str(tmp_dir)
+        except ImportError:
+            cmdstan_filesystem = None
+
+        yield str(out_dir)
+    finally:
+        if cmdstan_filesystem is not None and old_cmdstan_tmpdir is not None:
+            cmdstan_filesystem._TMPDIR = old_cmdstan_tmpdir
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        tempfile.tempdir = old_tempdir
 
 def score_with_ewma(df, events_df=None, seed=RANDOM_SEED,
                     year2_start=YEAR2_START,
@@ -220,7 +266,8 @@ def score_with_prophet(df, events_df=None, seed=RANDOM_SEED,
     # 월말 배치 효과를 위한 추가 계절성
     m.add_seasonality(name="monthly", period=30.5, fourier_order=5)
 
-    m.fit(train)
+    with _ascii_tempdir_for_cmdstan() as prophet_output_dir:
+        m.fit(train, output_dir=prophet_output_dir)
 
     forecast = m.predict(full[["ds"]])
     yhat = forecast["yhat"].values

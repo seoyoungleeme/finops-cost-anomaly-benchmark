@@ -2,7 +2,13 @@
 
 import matplotlib.pyplot as plt
 
-from .config import BUDGETS, PAPER_COLOR_MAP, PAPER_DPI, SEEDS, YEAR2_START
+try:
+    from .config import BUDGETS, PAPER_COLOR_MAP, PAPER_DPI, SEEDS, YEAR2_START
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import BUDGETS, PAPER_COLOR_MAP, PAPER_DPI, SEEDS, YEAR2_START
 
 def plot_data_overview(df, events_df, year2_start=YEAR2_START, save_path=None):
     """

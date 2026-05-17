@@ -27,8 +27,8 @@ DF_COLUMNS = [
 OUTPUT_DIR = "./outputs"
 FIG_DIR = os.path.join(OUTPUT_DIR, "figures")
 
-RESULTS_DIR = "/content/finops_benchmark/results"
-FIGS_DIR_NEW = "/content/finops_benchmark/figures"
+RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
+FIGS_DIR_NEW = os.path.join(OUTPUT_DIR, "figures")
 
 SEEDS = list(range(10))
 BUDGETS = [
@@ -49,6 +49,15 @@ EVENT_KEEP_COLS = [
     "anomaly_type", "intensity_level",
     "detected", "detection_delay", "total_excess_cost", "mctd",
 ]
+
+# FOCUS real-data integration
+FOCUS_DATA_URL = (
+    "https://raw.githubusercontent.com/FinOps-Open-Cost-and-Usage-Spec/"
+    "FOCUS-Sample-Data/main/FOCUS-1.0/focus_sample_10000.csv"
+)
+FOCUS_CACHE_DIR = ".focus_cache"
+FOCUS_COST_COL = "BilledCost"
+FOCUS_GROUP_BY = ["ProviderName", "ServiceCategory"]
 
 PAPER_DPI = 200
 PAPER_COLOR_MAP = {

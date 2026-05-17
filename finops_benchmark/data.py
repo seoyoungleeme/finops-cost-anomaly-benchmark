@@ -3,21 +3,41 @@
 import numpy as np
 import pandas as pd
 
-from .config import (
-    BASE_LEVEL,
-    CONTEXTUAL_LEVELS,
-    DF_COLUMNS,
-    GRADUAL_LEVELS,
-    MONTHLY_GROWTH,
-    N_DAYS,
-    N_EVENTS_HIGH,
-    N_EVENTS_LOW,
-    NOISE_PCT,
-    RANDOM_SEED,
-    SPIKE_LEVELS,
-    START_DATE,
-    YEAR2_START,
-)
+try:
+    from .config import (
+        BASE_LEVEL,
+        CONTEXTUAL_LEVELS,
+        DF_COLUMNS,
+        GRADUAL_LEVELS,
+        MONTHLY_GROWTH,
+        N_DAYS,
+        N_EVENTS_HIGH,
+        N_EVENTS_LOW,
+        NOISE_PCT,
+        RANDOM_SEED,
+        SPIKE_LEVELS,
+        START_DATE,
+        YEAR2_START,
+    )
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import (
+        BASE_LEVEL,
+        CONTEXTUAL_LEVELS,
+        DF_COLUMNS,
+        GRADUAL_LEVELS,
+        MONTHLY_GROWTH,
+        N_DAYS,
+        N_EVENTS_HIGH,
+        N_EVENTS_LOW,
+        NOISE_PCT,
+        RANDOM_SEED,
+        SPIKE_LEVELS,
+        START_DATE,
+        YEAR2_START,
+    )
 
 def generate_baseline_series(
     n_days=N_DAYS,
@@ -26,6 +46,7 @@ def generate_baseline_series(
     noise_pct=NOISE_PCT,
     start_date=START_DATE,
     seed=RANDOM_SEED,
+    weekly_factor=None,
 ):
     """
     정상 패턴 시계열을 생성한다.
@@ -60,9 +81,14 @@ def generate_baseline_series(
     trend = base_level * (1.0 + daily_growth * t)
 
     # 2) 주간 계절성: 0=Mon, ..., 6=Sun, 평균 1.0이 되도록 설계
-    dow = t % 7
-    weekly_factor = np.array([1.10, 1.15, 1.15, 1.15, 1.05, 0.75, 0.65])
-    weekly = trend * (weekly_factor[dow] - 1.0)
+    _default_wf = np.array([1.10, 1.15, 1.15, 1.15, 1.05, 0.75, 0.65])
+    if weekly_factor is None:
+        _wf = _default_wf
+        dow_idx = t % 7  # assumes Monday start (default start_date 2024-01-01)
+    else:
+        _wf = np.asarray(weekly_factor, dtype=float)
+        dow_idx = dates.dayofweek.values  # calendar-correct mapping
+    weekly = trend * (_wf[dow_idx] - 1.0)
 
     # 3) 월말 배치 효과: 실제 달력 기준으로 일 28일 이상이면 +5%
     dom = dates.day.values
@@ -310,6 +336,71 @@ def build_dataset(seed=RANDOM_SEED, n_days=N_DAYS, year2_start=YEAR2_START,
     df["score"] = np.nan
     df["alert"] = False
     # DF_COLUMNS는 Cell 5에 정의되어 있음. 아래 한 줄로 동적 확장.
+    extended_cols = list(DF_COLUMNS)
+    if "cost_impact" not in extended_cols:
+        insert_at = extended_cols.index("excess_cost") + 1
+        extended_cols.insert(insert_at, "cost_impact")
+    df = df[extended_cols]
+
+    return df, events_df
+
+
+def build_focus_calibrated_dataset(
+    stats,
+    seed=RANDOM_SEED,
+    n_days=N_DAYS,
+    year2_start=YEAR2_START,
+    start_date=START_DATE,
+):
+    """Build a benchmark dataset using statistics calibrated from real FOCUS data.
+
+    Generates a 730-day synthetic baseline whose trend, noise, and DoW
+    seasonality reflect the real-world parameters in *stats* (produced by
+    ``focus_calibration.fit_series_statistics``), then injects synthetic
+    anomalies so that ground-truth labels are available for full evaluation.
+
+    Parameters
+    ----------
+    stats : dict
+        Keys: ``base_level``, ``monthly_growth``, ``noise_pct``,
+        ``weekly_factor`` (list of 7 DoW multipliers).
+    seed, n_days, year2_start, start_date : same as ``build_dataset``.
+
+    Returns
+    -------
+    df, events_df : same schema as ``build_dataset``.
+    """
+    y_actual, y_expected, dates = generate_baseline_series(
+        n_days=n_days,
+        base_level=stats["base_level"],
+        monthly_growth=stats["monthly_growth"],
+        noise_pct=stats["noise_pct"],
+        start_date=start_date,
+        seed=seed,
+        weekly_factor=stats.get("weekly_factor"),
+    )
+
+    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df) = inject_anomalies(
+        y_actual, y_expected,
+        year2_start=year2_start,
+        seed=seed,
+    )
+
+    df = pd.DataFrame({
+        "date": dates,
+        "day": np.arange(n_days),
+        "y": y_mod,
+        "y_expected_baseline": y_expected,
+        "is_anomaly": is_anom,
+        "anomaly_type": a_type,
+        "intensity_level": a_int,
+        "event_id": ev_id,
+        "excess_cost": excess,
+        "cost_impact": cost_imp,
+    })
+    df["score"] = np.nan
+    df["alert"] = False
+
     extended_cols = list(DF_COLUMNS)
     if "cost_impact" not in extended_cols:
         insert_at = extended_cols.index("excess_cost") + 1

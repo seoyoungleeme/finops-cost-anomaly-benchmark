@@ -9,7 +9,13 @@ from sklearn.metrics import (
     recall_score,
 )
 
-from .config import YEAR2_START
+try:
+    from .config import YEAR2_START
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import YEAR2_START
 
 def compute_thresholds(scores_long, year2_start=YEAR2_START, percentile=99.0):
     """

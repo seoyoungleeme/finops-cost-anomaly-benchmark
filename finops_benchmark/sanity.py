@@ -3,8 +3,15 @@
 import numpy as np
 import pandas as pd
 
-from .config import NOISE_PCT, YEAR2_START
-from .evaluation import compute_thresholds
+try:
+    from .config import NOISE_PCT, YEAR2_START
+    from .evaluation import compute_thresholds
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import NOISE_PCT, YEAR2_START
+    from evaluation import compute_thresholds
 
 def run_sanity_checks(df, events_df, scores_long, thresholds,
                       predictions_df, model_metrics_df,
