@@ -1,7 +1,29 @@
 # FinOps Cost Anomaly Benchmark
 
-Benchmark code for comparing cloud-cost anomaly detectors under both fully
-synthetic data and FOCUS-calibrated data.
+## Why This Project Exists
+
+Cloud bills break in expensive, silent ways: a misconfigured autoscaler, a
+forgotten GPU instance, a runaway data-transfer job. By the time the monthly
+invoice arrives, the money is already spent. FinOps teams therefore need
+detectors that catch cost anomalies early — but choosing a detector is
+currently guesswork, because **there is no public, labeled benchmark for
+cloud-cost anomaly detection.**
+
+The reason no such benchmark exists is structural: real billing data (including
+the FOCUS open billing standard) ships with **no ground-truth anomaly labels**.
+Without labels you cannot measure recall, detection delay, or how much money a
+detector would have saved. You can only eyeball spikes.
+
+This project closes that gap. It generates daily cloud-cost series with
+**controlled, labeled anomalies** (spike / contextual / gradual, at low / mid /
+high intensity), and can **calibrate the baseline to real FOCUS billing
+statistics** so the synthetic series resembles real spend while keeping exact
+ground truth. It then compares four representative detectors under a strict
+leakage-free protocol and scores them with **cost-aware** metrics, not just
+classification accuracy — because in FinOps the goal is not "detect anomalies,"
+it is "catch the *expensive* ones *fast* without drowning the team in alerts."
+
+## What It Is
 
 The project started as a notebook experiment and is now organized as importable
 Python modules plus command-line runners. It generates daily cloud-cost series,
@@ -64,27 +86,41 @@ All models output a long-format score table:
 model_name, date, day, score
 ```
 
-## Metrics
+## Evaluation Protocol
 
-Thresholds are learned from year 1 scores only. Evaluation is performed on year
-2, where anomalies are injected.
+Year 1 contains no injected anomalies; all anomalies live in Year 2. The
+benchmark exploits this:
 
-Primary metrics include:
+- **Models are fit on Year 1 only.** Normalization statistics, training
+  windows, and forecast baselines never see Year-2 data.
+- **Thresholds are calibrated on Year 1 scores only.** Each
+  `year1_fpr_target` (0.5% / 1.0% / 2.0%) sets the alert threshold at the
+  matching Year-1 score percentile (99.5 / 99.0 / 98.0). That is, it caps the
+  false-alarm rate the model *would have produced on clean Year-1 data*.
+- **All metrics are computed on Year 2 only.**
 
-- precision, recall, F1
-- AUPRC from raw anomaly scores
+**Important — `year1_fpr_target` is a calibration knob, not a Year-2 alert
+budget.** The number of alerts a model fires in Year 2 is *not* constrained and
+varies widely by model (a poorly-calibrated model can fire on most days even at
+the strictest setting). This is intentional and is itself a reported result: it
+exposes operational alert-fatigue behavior that a fixed-budget evaluation would
+hide. For a threshold-free comparison, **AUPRC** is reported alongside the
+calibrated-threshold metrics.
+
+Primary metrics:
+
+- precision, recall, F1 (calibrated-threshold, point-wise)
+- AUPRC from raw anomaly scores (threshold-free ranking quality)
 - false alarm rate
 - event recall
 - mean detection delay
-- cost-weighted recall
-- mean cost-to-detect (`mean_mctd`)
-- alert cost efficiency
+- cost-weighted recall — share of *dollars* of anomaly caught, not just events
+- mean cost-to-detect (`mean_mctd`) — money burned before the first alert
+- alert cost efficiency — dollars of anomaly caught per alert raised
 
-Default alert budgets are:
-
-- `0.5%` of days alerted
-- `1.0%` of days alerted
-- `2.0%` of days alerted
+The three `year1_fpr_target` settings (0.5% / 1.0% / 2.0%) trace the
+strict-to-lenient calibration curve; 1.0% is the primary operating point used
+for the paper-ready tables and figures.
 
 ## Repository Structure
 

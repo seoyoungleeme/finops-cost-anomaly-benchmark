@@ -53,7 +53,7 @@ from finops_benchmark.focus_calibration import (
 )
 from finops_benchmark.focus_loader import aggregate_daily, download_focus_data, load_focus_data
 
-_EVAL_BUDGET = 0.01   # primary budget for summary tables
+_EVAL_FAR_TARGET = 0.01   # primary year-1 FAR target for summary tables
 _SUMMARY_METRICS = [
     "f1", "auprc", "cost_weighted_recall",
     "mean_mctd", "alert_cost_efficiency", "false_alarm_rate",
@@ -66,7 +66,7 @@ def _safe_label(label: str) -> str:
 
 def _build_rank_reversal_table(
     per_service_metrics: dict,
-    budget: float = _EVAL_BUDGET,
+    year1_fpr_target: float = _EVAL_FAR_TARGET,
 ) -> pd.DataFrame:
     """Build per-service model ranks across 4 metrics to surface rank reversals.
 
@@ -83,7 +83,7 @@ def _build_rank_reversal_table(
 
     rows = []
     for service, metrics_df in per_service_metrics.items():
-        sub = metrics_df[metrics_df["budget"] == budget]
+        sub = metrics_df[metrics_df["year1_fpr_target"] == year1_fpr_target]
         means = sub.groupby("model_name")[list(_RANK_METRICS)].mean()
 
         for model in means.index:
@@ -191,8 +191,8 @@ def main(args: argparse.Namespace) -> None:
             output_dir / f"focus_events_{safe}.csv", index=False
         )
 
-        # Summary row: mean of each metric at primary budget across seeds & models
-        sub = metrics_df[metrics_df["budget"] == _EVAL_BUDGET]
+        # Summary row: mean of each metric at primary year-1 FAR target across seeds & models
+        sub = metrics_df[metrics_df["year1_fpr_target"] == _EVAL_FAR_TARGET]
         row = {
             "service": label,
             "days_observed": stats.get("days_observed", ""),
@@ -209,7 +209,7 @@ def main(args: argparse.Namespace) -> None:
         best_f1 = (
             sub.groupby("model_name")["f1"].mean().round(3).to_dict()
         )
-        print(f"     F1 @ budget=1%: {best_f1}")
+        print(f"     F1 @ year-1 FAR target=1%: {best_f1}")
 
     # 5. Cross-service summary tables
     print("\nStep 5/5  Building cross-service summary tables...")
@@ -239,11 +239,11 @@ def main(args: argparse.Namespace) -> None:
     all_metrics_pooled = pd.concat(
         list(per_service_metrics.values()), ignore_index=True
     )
-    overall_ranking = build_rank_comparison(all_metrics_pooled, budget=_EVAL_BUDGET)
+    overall_ranking = build_rank_comparison(all_metrics_pooled, year1_fpr_target=_EVAL_FAR_TARGET)
     overall_ranking.to_csv(
         output_dir / "focus_overall_model_ranking.csv", index=False
     )
-    print("\n  Overall model ranking (pooled across all services, budget=1%):")
+    print("\n  Overall model ranking (pooled across all services, year-1 FAR target=1%):")
     print(overall_ranking[["model_name", "f1", "f1_rank", "cost_weighted_recall"]].to_string(index=False))
 
     print(f"\nDone.  Results written to {output_dir}/")

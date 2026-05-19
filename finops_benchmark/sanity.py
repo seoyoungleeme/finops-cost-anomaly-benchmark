@@ -18,7 +18,8 @@ def run_sanity_checks(df, events_df, scores_long, thresholds,
                       all_model_metrics_df=None,
                       all_event_results_df=None,
                       year2_start=YEAR2_START,
-                      noise_pct=NOISE_PCT):
+                      noise_pct=NOISE_PCT,
+                      threshold_percentile=99.0):
     """
     Part 1~4 결과에 대한 검증을 수행하고 (요약표, 부속 상세 dict)를 반환한다.
 
@@ -125,9 +126,9 @@ def run_sanity_checks(df, events_df, scores_long, thresholds,
             and len(all_event_results_df) > 0
             and "seed" in all_event_results_df.columns):
         # 같은 seed 안에서는 모델/budget과 관계없이 event 수가 같아야 한다.
-        first_budget = sorted(all_event_results_df["budget"].unique())[0]
+        first_budget = sorted(all_event_results_df["year1_fpr_target"].unique())[0]
         per_seed_model = (
-            all_event_results_df[all_event_results_df["budget"] == first_budget]
+            all_event_results_df[all_event_results_df["year1_fpr_target"] == first_budget]
             .groupby(["seed", "model_name"])["event_id"]
             .nunique()
             .unstack("model_name")
@@ -159,20 +160,22 @@ def run_sanity_checks(df, events_df, scores_long, thresholds,
 
     # ----------------------------------------------------------
     # Check 7. Thresholds use Year 1 score only
-    #   single-seed: thresholds dict와 compute_thresholds(Year1, 99%) 재계산값 비교
-    #   추가: Year 2 99th percentile과 비교해 두 값이 같지 않은지도 확인
+    #   single-seed: thresholds dict와 compute_thresholds(Year1, threshold_percentile)
+    #   재계산값 비교
+    #   추가: Year 2 동일 percentile과 비교해 두 값이 같지 않은지도 확인
     # ----------------------------------------------------------
     recomputed = compute_thresholds(scores_long,
                                     year2_start=year2_start,
-                                    percentile=99.0)
+                                    percentile=threshold_percentile)
     diffs_y1 = {k: abs(thresholds[k] - recomputed[k]) for k in thresholds}
     max_diff_y1 = max(diffs_y1.values())
 
-    # Year 2 99th percentile (확인용)
+    # Year 2 동일 percentile (확인용)
     y2_99 = {}
     for name, sub in scores_long.groupby("model_name"):
         s_y2 = sub.loc[sub["day"] >= year2_start, "score"].dropna().values
-        y2_99[name] = float(np.percentile(s_y2, 99)) if len(s_y2) else float("nan")
+        y2_99[name] = (float(np.percentile(s_y2, threshold_percentile))
+                       if len(s_y2) else float("nan"))
 
     # 만약 thresholds == Year 2 99th 이면 학습 누수
     diffs_y2 = {k: abs(thresholds[k] - y2_99[k]) for k in thresholds}

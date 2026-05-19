@@ -142,7 +142,7 @@ def _bar_with_err(ax, names, means, stds, ylabel, title):
         tick.set_rotation(15)
 
 def plot_budget1_bar(summary_metrics_df, metric, save_path,
-                     budget=0.01, ascending_better=False):
+                     year1_fpr_target=0.01, ascending_better=False):
     """
     한 budget에서 모델별 metric 평균을 막대로, 표준편차를 errorbar로 그린다.
 
@@ -151,7 +151,7 @@ def plot_budget1_bar(summary_metrics_df, metric, save_path,
     metric            : 'f1', 'cost_weighted_recall', 'alert_cost_efficiency' 등
     ascending_better  : True면 작을수록 좋은 metric (정렬 방향만 다름)
     """
-    sub = summary_metrics_df[summary_metrics_df["budget"] == budget].copy()
+    sub = summary_metrics_df[summary_metrics_df["year1_fpr_target"] == year1_fpr_target].copy()
     mean_col = f"{metric}_mean"
     std_col = f"{metric}_std"
     sub = sub.sort_values(mean_col, ascending=ascending_better)
@@ -163,7 +163,7 @@ def plot_budget1_bar(summary_metrics_df, metric, save_path,
         sub[mean_col].values,
         sub[std_col].values,
         ylabel=metric,
-        title=f"{metric} at budget={budget*100:.1f}% (mean ± std over {len(SEEDS)} seeds)",
+        title=f"{metric} at year-1 FAR target={year1_fpr_target*100:.1f}% (mean ± std over {len(SEEDS)} seeds)",
     )
     plt.tight_layout()
     if save_path:
@@ -179,13 +179,13 @@ def plot_metric_by_budget(summary_metrics_df, metric, save_path):
     std_col = f"{metric}_std"
 
     for name, sub in summary_metrics_df.groupby("model_name"):
-        sub = sub.sort_values("budget")
-        ax.errorbar(sub["budget"].values * 100,
+        sub = sub.sort_values("year1_fpr_target")
+        ax.errorbar(sub["year1_fpr_target"].values * 100,
                     sub[mean_col].values,
                     yerr=sub[std_col].values,
                     marker="o", capsize=3, lw=1.4, label=name)
 
-    ax.set_xlabel("Budget (% of days allowed to alert)")
+    ax.set_xlabel("Year-1 FAR target (% of Year-1 days)")
     ax.set_ylabel(metric)
     ax.set_title(f"{metric} across budgets (mean ± std)")
     ax.set_xticks([b * 100 for b, _ in BUDGETS])
@@ -213,7 +213,7 @@ def plot_rank_comparison(rank_table, save_path):
     ax.set_yticks(range(1, n + 1))
     ax.set_ylim(n + 0.5, 0.5)         # 1이 위쪽
     ax.set_ylabel("rank (1 = best)")
-    ax.set_title("F1 rank vs Alert Cost Efficiency rank (budget=1%)")
+    ax.set_title("F1 rank vs Alert Cost Efficiency rank (year-1 FAR target=1%)")
     ax.grid(axis="y", alpha=0.3)
     ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=9)
     plt.tight_layout()
@@ -221,12 +221,12 @@ def plot_rank_comparison(rank_table, save_path):
         fig.savefig(save_path, dpi=120, bbox_inches="tight")
     return fig
 
-def get_canonical_model_order(summary_df, budget=0.01):
+def get_canonical_model_order(summary_df, year1_fpr_target=0.01):
     """
     F1 mean 내림차순으로 모델 이름 리스트를 반환한다.
     bar chart 3종은 모두 이 순서를 따른다.
     """
-    sub = (summary_df[summary_df["budget"] == budget]
+    sub = (summary_df[summary_df["year1_fpr_target"] == year1_fpr_target]
            .sort_values("f1_mean", ascending=False))
     return sub["model_name"].tolist()
 
@@ -242,11 +242,11 @@ def _adaptive_label(v):
     return f"{v:,.0f}"
 
 def plot_paper_bar(summary_df, metric, save_path,
-                   budget=0.01, ylabel=None, title=None,
+                   year1_fpr_target=0.01, ylabel=None, title=None,
                    model_order=None,
                    bar_color="#3a76b8"):
     """
-    budget=1% 기준 paper-ready 막대 그래프.
+    year1_fpr_target=1% 기준 paper-ready 막대 그래프.
 
     - mean을 막대 높이, std를 errorbar로 표시
     - 막대 위에 mean 값 텍스트 라벨 표시 (스케일에 따라 자동 포맷)
@@ -254,11 +254,12 @@ def plot_paper_bar(summary_df, metric, save_path,
 
     Parameters
     ----------
-    summary_df  : summary_metrics_df
-    metric      : 'f1' | 'cost_weighted_recall' | 'alert_cost_efficiency' 등
-    save_path   : png 저장 경로
+    summary_df        : summary_metrics_df
+    metric            : 'f1' | 'cost_weighted_recall' | 'alert_cost_efficiency' 등
+    save_path         : png 저장 경로
+    year1_fpr_target  : Year-1 FAR target (threshold selection key)
     """
-    sub = summary_df[summary_df["budget"] == budget].copy()
+    sub = summary_df[summary_df["year1_fpr_target"] == year1_fpr_target].copy()
     if model_order is not None:
         sub = (sub.set_index("model_name")
                   .loc[model_order]
@@ -284,7 +285,7 @@ def plot_paper_bar(summary_df, metric, save_path,
 
     ax.set_ylabel(ylabel or metric)
     ax.set_title(title or
-                 f"{metric} at budget={budget*100:.1f}% (mean \u00b1 std)")
+                 f"{metric} at year-1 FAR target={year1_fpr_target*100:.1f}% (mean \u00b1 std)")
     ax.grid(axis="y", alpha=0.3)
     ax.set_axisbelow(True)
     plt.xticks(rotation=12)
@@ -310,8 +311,8 @@ def plot_paper_line(summary_df, metric, save_path,
     # 모델 이름은 알파벳 정렬 (legend 가독성)
     for name in sorted(summary_df["model_name"].unique()):
         sub = (summary_df[summary_df["model_name"] == name]
-               .sort_values("budget"))
-        ax.errorbar(sub["budget"].values * 100.0,
+               .sort_values("year1_fpr_target"))
+        ax.errorbar(sub["year1_fpr_target"].values * 100.0,
                     sub[mean_col].values,
                     yerr=sub[std_col].fillna(0.0).values,
                     marker="o", capsize=3, lw=1.6,
@@ -321,7 +322,7 @@ def plot_paper_line(summary_df, metric, save_path,
     base_ylabel = ylabel or metric
     if lower_is_better:
         base_ylabel = f"{base_ylabel} (lower is better)"
-    ax.set_xlabel("Budget (% of evaluation days allowed to alert)")
+    ax.set_xlabel("Year-1 FAR target (% of Year-1 days)")
     ax.set_ylabel(base_ylabel)
     ax.set_title(title or f"{metric} across budgets (mean \u00b1 std)")
 

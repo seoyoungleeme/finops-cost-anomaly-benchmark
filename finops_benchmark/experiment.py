@@ -75,12 +75,12 @@ def run_one_seed(seed, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False):
         # 메타 정보 부착 (long-format 식별 키)
         met_s = met_s.copy()
         met_s.insert(0, "seed", seed)
-        met_s.insert(1, "budget", budget)
+        met_s.insert(1, "year1_fpr_target", budget)
         met_s.insert(2, "threshold_quantile", q)
 
         ev_s = ev_s.copy()
         ev_s.insert(0, "seed", seed)
-        ev_s.insert(1, "budget", budget)
+        ev_s.insert(1, "year1_fpr_target", budget)
 
         metric_parts.append(met_s)
         event_parts.append(ev_s)
@@ -98,20 +98,20 @@ def build_summary_metrics(all_model_metrics_df, metric_cols=METRIC_COLS):
         <metric>_mean, <metric>_std (각 metric_cols 항목)
     """
     grp = (all_model_metrics_df
-           .groupby(["budget", "model_name"])[metric_cols]
+           .groupby(["year1_fpr_target", "model_name"])[metric_cols]
            .agg(["mean", "std"]))
 
     # MultiIndex 컬럼을 평탄화: ('f1','mean') -> 'f1_mean'
     grp.columns = [f"{m}_{stat}" for m, stat in grp.columns]
-    grp = grp.reset_index().sort_values(["budget", "model_name"])
+    grp = grp.reset_index().sort_values(["year1_fpr_target", "model_name"])
     return grp
 
-def build_rank_table(all_model_metrics_df, budget=0.01):
+def build_rank_table(all_model_metrics_df, year1_fpr_target=0.01):
     """
-    지정 budget에서 모델별 F1, cost_weighted_recall, alert_cost_efficiency
+    지정 year1_fpr_target에서 모델별 F1, cost_weighted_recall, alert_cost_efficiency
     평균값과 그 순위를 한 표에 정리한다 (낮은 rank = 더 좋음).
     """
-    sub = (all_model_metrics_df[all_model_metrics_df["budget"] == budget]
+    sub = (all_model_metrics_df[all_model_metrics_df["year1_fpr_target"] == year1_fpr_target]
            .groupby("model_name")[["f1",
                                    "cost_weighted_recall",
                                    "alert_cost_efficiency",
@@ -149,9 +149,9 @@ def _format_mean_std(mean, std, kind="ratio"):
         return f"{mean:,.1f} \u00b1 {std:,.1f}"
     return f"{mean:.3f} \u00b1 {std:.3f}"
 
-def build_core_results_table(summary_df, budget=0.01):
+def build_core_results_table(summary_df, year1_fpr_target=0.01):
     """
-    budget=1% 기준 paper-ready 핵심 결과표를 만든다.
+    year1_fpr_target=1% 기준 paper-ready 핵심 결과표를 만든다.
 
     포함 metric
         f1, cost_weighted_recall, alert_cost_efficiency,
@@ -159,7 +159,7 @@ def build_core_results_table(summary_df, budget=0.01):
 
     행 순서는 f1 mean 내림차순.
     """
-    sub = summary_df[summary_df["budget"] == budget].copy()
+    sub = summary_df[summary_df["year1_fpr_target"] == year1_fpr_target].copy()
 
     rows = []
     # f1 내림차순으로 순회
@@ -184,7 +184,7 @@ def build_core_results_table(summary_df, budget=0.01):
 
     return pd.DataFrame(rows)
 
-def build_rank_comparison(all_metrics_df, budget=0.01):
+def build_rank_comparison(all_metrics_df, year1_fpr_target=0.01):
     """
     각 모델의 metric 평균값과 그 순위를 한 표에 정리한다.
 
@@ -201,7 +201,7 @@ def build_rank_comparison(all_metrics_df, budget=0.01):
         alert_cost_efficiency, ace_rank,
         mean_mctd, mctd_rank
     """
-    sub = (all_metrics_df[all_metrics_df["budget"] == budget]
+    sub = (all_metrics_df[all_metrics_df["year1_fpr_target"] == year1_fpr_target]
            .groupby("model_name")[["f1",
                                    "cost_weighted_recall",
                                    "alert_cost_efficiency",
@@ -266,11 +266,11 @@ def run_one_seed_focus(seed, stats, year2_start=YEAR2_START, budgets=BUDGETS, ve
         )
         met_s = met_s.copy()
         met_s.insert(0, "seed", seed)
-        met_s.insert(1, "budget", budget)
+        met_s.insert(1, "year1_fpr_target", budget)
         met_s.insert(2, "threshold_quantile", q)
         ev_s = ev_s.copy()
         ev_s.insert(0, "seed", seed)
-        ev_s.insert(1, "budget", budget)
+        ev_s.insert(1, "year1_fpr_target", budget)
         metric_parts.append(met_s)
         event_parts.append(ev_s)
 

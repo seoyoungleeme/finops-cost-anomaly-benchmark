@@ -48,8 +48,8 @@ def main():
     from finops_benchmark.config import EVENT_KEEP_COLS
     all_event_results_df = all_event_results_df_full[EVENT_KEEP_COLS].copy()
     summary_metrics_df = build_summary_metrics(all_model_metrics_df)
-    core_results_df = build_core_results_table(summary_metrics_df, budget=0.01)
-    rank_comparison_df = build_rank_comparison(all_model_metrics_df, budget=0.01)
+    core_results_df = build_core_results_table(summary_metrics_df, year1_fpr_target=0.01)
+    rank_comparison_df = build_rank_comparison(all_model_metrics_df, year1_fpr_target=0.01)
 
     all_model_metrics_df.to_csv(os.path.join(results_dir, "all_model_metrics.csv"), index=False)
     summary_metrics_df.to_csv(os.path.join(results_dir, "summary_metrics.csv"), index=False)
@@ -58,15 +58,15 @@ def main():
     rank_comparison_df.to_csv(os.path.join(results_dir, "paper_rank_comparison_budget1pct.csv"), index=False)
 
     configure_paper_matplotlib()
-    canonical_order = get_canonical_model_order(summary_metrics_df, budget=0.01)
+    canonical_order = get_canonical_model_order(summary_metrics_df, year1_fpr_target=0.01)
     plot_paper_bar(summary_metrics_df, "f1", os.path.join(figures_dir, "paper_f1_bar_budget1pct.png"),
-                   ylabel="F1 score", title=f"F1 at budget=1% (mean +/- std over {len(SEEDS)} seeds)",
+                   ylabel="F1 score", title=f"F1 at year-1 FAR target=1% (mean +/- std over {len(SEEDS)} seeds)",
                    model_order=canonical_order)
     plot_paper_bar(summary_metrics_df, "cost_weighted_recall", os.path.join(figures_dir, "paper_dollar_recall_bar_budget1pct.png"),
-                   ylabel="$-Recall (cost-weighted recall)", title=f"Cost-weighted recall at budget=1% (mean +/- std over {len(SEEDS)} seeds)",
+                   ylabel="$-Recall (cost-weighted recall)", title=f"Cost-weighted recall at year-1 FAR target=1% (mean +/- std over {len(SEEDS)} seeds)",
                    model_order=canonical_order)
     plot_paper_bar(summary_metrics_df, "alert_cost_efficiency", os.path.join(figures_dir, "paper_ace_bar_budget1pct.png"),
-                   ylabel="Alert Cost Efficiency ($ per alert)", title=f"Alert Cost Efficiency at budget=1% (mean +/- std over {len(SEEDS)} seeds)",
+                   ylabel="Alert Cost Efficiency ($ per alert)", title=f"Alert Cost Efficiency at year-1 FAR target=1% (mean +/- std over {len(SEEDS)} seeds)",
                    model_order=canonical_order)
     plot_paper_line(summary_metrics_df, "f1", os.path.join(figures_dir, "paper_f1_by_budget.png"),
                     ylabel="F1 score", title="F1 across alert budgets")

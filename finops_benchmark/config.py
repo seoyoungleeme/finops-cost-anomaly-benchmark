@@ -45,7 +45,7 @@ METRIC_COLS = [
 ]
 
 EVENT_KEEP_COLS = [
-    "seed", "budget", "model_name", "event_id",
+    "seed", "year1_fpr_target", "model_name", "event_id",
     "anomaly_type", "intensity_level",
     "detected", "detection_delay", "total_excess_cost", "mctd",
 ]
@@ -56,7 +56,8 @@ FOCUS_DATA_URL = (
     "FOCUS-Sample-Data/main/FOCUS-1.0/focus_sample_10000.csv"
 )
 FOCUS_CACHE_DIR = ".focus_cache"
-FOCUS_COST_COL = "BilledCost"
+# Cost column is auto-selected in focus_loader (EffectiveCost preferred,
+# BilledCost fallback); no single fixed column is configured here.
 FOCUS_GROUP_BY = ["ProviderName", "ServiceCategory"]
 
 PAPER_DPI = 200
