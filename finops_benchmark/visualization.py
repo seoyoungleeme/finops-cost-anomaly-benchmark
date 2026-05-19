@@ -1,6 +1,7 @@
 """Plotting helpers for exploratory and paper-ready figures."""
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 try:
     from .config import BUDGETS, PAPER_COLOR_MAP, PAPER_DPI, SEEDS, YEAR2_START
@@ -346,3 +347,303 @@ def configure_paper_matplotlib():
         "legend.fontsize": 9,
         "figure.dpi": 110,
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FOCUS benchmark figures
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TYPE_ORDER = ["spike", "contextual", "gradual"]
+_INTENSITY_ORDER = ["low", "mid", "high"]
+_TYPE_COLORS = {"spike": "#d62728", "contextual": "#ff7f0e", "gradual": "#9467bd"}
+
+
+def _grouped_bars(ax, categories, series_dict, ylabel, title,
+                  color_map=None, ylim=None, value_labels=True):
+    """Grouped bar helper: series_dict = {name: [values]} in category order."""
+    n_cats = len(categories)
+    n_ser = len(series_dict)
+    width = 0.72 / n_ser
+    x = np.arange(n_cats)
+
+    for i, (name, vals) in enumerate(series_dict.items()):
+        offset = (i - n_ser / 2 + 0.5) * width
+        color = color_map.get(name) if color_map else None
+        bars = ax.bar(x + offset, vals, width=width * 0.92,
+                      label=name, color=color,
+                      edgecolor="black", linewidth=0.4, alpha=0.88)
+        if value_labels:
+            for bar, v in zip(bars, vals):
+                if np.isfinite(v) and v > 0:
+                    ax.text(bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 0.01 * (ylim[1] if ylim else 1),
+                            f"{v:.2f}", ha="center", va="bottom",
+                            fontsize=7, rotation=0)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories, rotation=15, ha="right")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend(fontsize=8, loc="best")
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_axisbelow(True)
+    if ylim:
+        ax.set_ylim(*ylim)
+
+
+def plot_focus_detection_by_type(events_df, save_path, year1_fpr_target=0.01):
+    """Two-panel grouped bar: detection rate by anomaly type (left) and type×intensity (right)."""
+    sub = events_df[events_df["year1_fpr_target"] == year1_fpr_target].copy()
+    models = [m for m in PAPER_COLOR_MAP if m in sub["model_name"].unique()]
+
+    # Left panel: by type only
+    by_type = (sub.groupby(["model_name", "anomaly_type"])["detected"]
+               .mean().unstack("anomaly_type").reindex(columns=_TYPE_ORDER))
+
+    # Right panel: by type × intensity
+    sub["type_intensity"] = (
+        sub["anomaly_type"].str[:4] + "_"
+        + sub["intensity_level"].apply(lambda x: {"low": "L", "mid": "M", "high": "H"}.get(x, x))
+    )
+    ti_order = [f"{t[:4]}_{s}"
+                for t in _TYPE_ORDER
+                for s in ("L", "M", "H")]
+    by_ti = (sub.groupby(["model_name", "type_intensity"])["detected"]
+             .mean().unstack("type_intensity").reindex(columns=ti_order, fill_value=float("nan")))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Left
+    series = {m: by_type.loc[m].fillna(0).tolist() for m in models if m in by_type.index}
+    _grouped_bars(ax1, _TYPE_ORDER, series,
+                  ylabel="Detection Rate", title="Detection Rate by Anomaly Type",
+                  color_map=PAPER_COLOR_MAP, ylim=(0, 1.12), value_labels=True)
+
+    # Right
+    ti_labels = [c.replace("_", " ") for c in ti_order]
+    series2 = {m: by_ti.loc[m].fillna(0).tolist() for m in models if m in by_ti.index}
+    _grouped_bars(ax2, ti_labels, series2,
+                  ylabel="Detection Rate", title="Detection Rate by Type x Intensity",
+                  color_map=PAPER_COLOR_MAP, ylim=(0, 1.15), value_labels=False)
+    ax2.tick_params(axis="x", labelsize=8)
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=PAPER_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_focus_detection_heatmap(events_df, save_path, year1_fpr_target=0.01):
+    """Heatmap: rows=models, cols=type×intensity, value=detection rate."""
+    sub = events_df[events_df["year1_fpr_target"] == year1_fpr_target].copy()
+    sub["type_intensity"] = (
+        sub["anomaly_type"] + "\n" + sub["intensity_level"]
+    )
+    col_order = [f"{t}\n{i}" for t in _TYPE_ORDER for i in _INTENSITY_ORDER]
+
+    pivot = (sub.groupby(["model_name", "type_intensity"])["detected"]
+             .mean().unstack("type_intensity")
+             .reindex(columns=col_order, fill_value=float("nan")))
+
+    row_order = sorted(pivot.index,
+                       key=lambda m: -pivot.loc[m].mean(skipna=True))
+    pivot = pivot.loc[row_order]
+
+    fig, ax = plt.subplots(figsize=(11, 3.6))
+    data = pivot.values.astype(float)
+    im = ax.imshow(data, vmin=0, vmax=1, cmap="RdYlGn", aspect="auto")
+
+    # Annotations
+    for r in range(data.shape[0]):
+        for c in range(data.shape[1]):
+            val = data[r, c]
+            if np.isfinite(val):
+                text_color = "black" if 0.35 < val < 0.75 else "white" if val <= 0.35 else "black"
+                ax.text(c, r, f"{val:.2f}", ha="center", va="center",
+                        fontsize=9, color=text_color, fontweight="bold")
+
+    ax.set_xticks(range(len(col_order)))
+    ax.set_xticklabels([c.replace("\n", " / ") for c in col_order],
+                       rotation=35, ha="right", fontsize=9)
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels(pivot.index, fontsize=10)
+    ax.set_title(f"Detection Rate (year-1 FAR={year1_fpr_target*100:.0f}%)  "
+                 f"— green=high, red=low")
+
+    # Vertical separators between anomaly types
+    for sep in [2.5, 5.5]:
+        ax.axvline(sep, color="white", lw=2)
+
+    cbar = plt.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+    cbar.set_label("Detection Rate", fontsize=9)
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=PAPER_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_focus_mctd_by_type(events_df, save_path, year1_fpr_target=0.01):
+    """Grouped bar: Mean Cost-To-Detect by anomaly type per model."""
+    sub = events_df[events_df["year1_fpr_target"] == year1_fpr_target].copy()
+    models = [m for m in PAPER_COLOR_MAP if m in sub["model_name"].unique()]
+
+    by_type = (sub.groupby(["model_name", "anomaly_type"])["mctd"]
+               .mean().unstack("anomaly_type").reindex(columns=_TYPE_ORDER))
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ymax = by_type.max().max()
+    series = {m: by_type.loc[m].fillna(0).tolist() for m in models if m in by_type.index}
+    _grouped_bars(ax, _TYPE_ORDER, series,
+                  ylabel="Mean Cost-To-Detect ($)",
+                  title="Mean Cost-To-Detect by Anomaly Type\n(lower is better)",
+                  color_map=PAPER_COLOR_MAP,
+                  ylim=(0, ymax * 1.22),
+                  value_labels=True)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=PAPER_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_focus_radar(overall_ranking_df, save_path):
+    """Radar/spider chart: 4 normalized metrics per model."""
+    df = overall_ranking_df.copy()
+
+    # Normalize all axes to [0, 1], higher = better
+    metrics_raw = {
+        "F1":             ("f1",                    False),   # higher=better, already [0,1]
+        "Dollar\nRecall": ("cost_weighted_recall",   False),
+        "ACE\n(norm)":    ("alert_cost_efficiency",  False),
+        "1-MCTD\n(norm)": ("mean_mctd",              True),   # lower=better → invert
+    }
+
+    norm = {}
+    for label, (col, invert) in metrics_raw.items():
+        vals = df[col].astype(float).values
+        lo, hi = vals.min(), vals.max()
+        span = hi - lo if hi > lo else 1.0
+        n = (vals - lo) / span
+        norm[label] = 1 - n if invert else n
+
+    labels = list(metrics_raw.keys())
+    n_ax = len(labels)
+    angles = np.linspace(0, 2 * np.pi, n_ax, endpoint=False).tolist()
+    angles += angles[:1]
+
+    fig, ax = plt.subplots(figsize=(6.5, 6.5), subplot_kw={"polar": True})
+
+    for idx, row in df.iterrows():
+        model = row["model_name"]
+        vals = [norm[l][idx] for l in labels]
+        vals += vals[:1]
+        color = PAPER_COLOR_MAP.get(model, None)
+        ax.plot(angles, vals, lw=2, label=model, color=color)
+        ax.fill(angles, vals, alpha=0.08, color=color)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_ylim(0, 1)
+    ax.set_yticks([0.25, 0.5, 0.75, 1.0])
+    ax.set_yticklabels(["0.25", "0.5", "0.75", "1.0"], fontsize=7)
+    ax.set_title("Multi-Metric Model Comparison\n(normalized, higher = better)",
+                 pad=20, fontsize=12)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.35, 1.15), fontsize=9)
+    ax.grid(alpha=0.4)
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=PAPER_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_focus_rank_slope(rank_reversal_df, save_path):
+    """Slope/bump chart: model rank across 4 metrics (rank 1 = top)."""
+    rank_cols = ["f1_rank", "dollar_recall_rank", "ace_rank", "mctd_rank"]
+    x_labels = ["F1", "Dollar\nRecall", "ACE", "MCTD\n(lower↑)"]
+
+    # Average ranks across services if multiple
+    avg = (rank_reversal_df
+           .groupby("model_name")[rank_cols]
+           .mean()
+           .reset_index())
+
+    n_models = len(avg)
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    for _, row in avg.iterrows():
+        model = row["model_name"]
+        ranks = [row[c] for c in rank_cols]
+        color = PAPER_COLOR_MAP.get(model, None)
+        ax.plot(range(len(rank_cols)), ranks,
+                marker="o", lw=2.2, ms=8, label=model, color=color)
+        # Label at end
+        ax.text(len(rank_cols) - 0.92, ranks[-1],
+                f" {model}", va="center", fontsize=8.5, color=color)
+
+    ax.set_xticks(range(len(rank_cols)))
+    ax.set_xticklabels(x_labels, fontsize=10)
+    ax.set_yticks(range(1, n_models + 1))
+    ax.set_yticklabels([f"#{i}" for i in range(1, n_models + 1)])
+    ax.invert_yaxis()
+    ax.set_ylabel("Rank  (1 = best)")
+    ax.set_title("Model Rank Across Metrics\n"
+                 "(crossing lines = rank reversal — no single winner)")
+    ax.grid(alpha=0.3)
+    ax.set_axisbelow(True)
+    ax.legend(fontsize=8, loc="upper left",
+              bbox_to_anchor=(0.0, -0.12), ncol=4)
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=PAPER_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+def plot_focus_metric_overview(core_metrics_df, save_path, year1_fpr_target=0.01):
+    """2×2 bar subplots for F1, dollar_recall, ACE, MCTD at primary FAR target."""
+    sub = core_metrics_df[core_metrics_df["year1_fpr_target"] == year1_fpr_target].copy()
+    # Sort by F1
+    f1_order = (sub.sort_values("f1_mean", ascending=False)["model_name"].tolist())
+    sub = sub.set_index("model_name").loc[f1_order].reset_index()
+
+    specs = [
+        ("f1",                   "F1 Score",                   False, None),
+        ("cost_weighted_recall", "Dollar Recall",              False, None),
+        ("alert_cost_efficiency","Alert Cost Efficiency ($)",  False, None),
+        ("mean_mctd",            "Mean MCTD ($)\n(lower=better)", True, None),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.flatten()
+
+    for ax, (metric, ylabel, lower_better, _) in zip(axes, specs):
+        mc = f"{metric}_mean"
+        sc = f"{metric}_std"
+        means = sub[mc].values.astype(float)
+        stds = sub[sc].fillna(0).values.astype(float)
+        colors = [PAPER_COLOR_MAP.get(m, "#888888") for m in sub["model_name"]]
+        bars = ax.bar(sub["model_name"], means, yerr=stds,
+                      capsize=4, color=colors, edgecolor="black",
+                      linewidth=0.5, alpha=0.88,
+                      error_kw={"elinewidth": 1.2, "ecolor": "black"})
+        pad = 0.03 * (max(means) if max(means) > 0 else 1)
+        for bar, mu, sd in zip(bars, means, stds):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + sd + pad,
+                    _adaptive_label(mu),
+                    ha="center", va="bottom", fontsize=8.5)
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_title(f"{ylabel.split(chr(10))[0]}  "
+                     f"@ FAR={year1_fpr_target*100:.0f}%"
+                     + ("  (lower=better)" if lower_better else ""),
+                     fontsize=10)
+        ax.grid(axis="y", alpha=0.3)
+        ax.set_axisbelow(True)
+        plt.setp(ax.get_xticklabels(), rotation=12)
+
+    fig.suptitle(f"FOCUS Benchmark — Key Metrics (year-1 FAR target={year1_fpr_target*100:.0f}%,"
+                 f"  mean ± std over seeds)", fontsize=11, y=1.01)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=PAPER_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return fig
