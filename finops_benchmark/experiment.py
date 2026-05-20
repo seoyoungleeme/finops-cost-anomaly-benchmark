@@ -7,12 +7,13 @@ try:
     from .config import (
         BUDGETS,
         EVENT_KEEP_COLS,
+        FOCUS_REAL_SPLIT_RATIO,
         METRIC_COLS,
         N_DAYS,
         START_DATE,
         YEAR2_START,
     )
-    from .data import build_dataset, build_focus_calibrated_dataset
+    from .data import build_dataset, build_focus_calibrated_dataset, build_focus_real_dataset
     from .evaluation import run_evaluation
     from .models import run_all_models
 except ImportError:
@@ -22,12 +23,13 @@ except ImportError:
     from config import (
         BUDGETS,
         EVENT_KEEP_COLS,
+        FOCUS_REAL_SPLIT_RATIO,
         METRIC_COLS,
         N_DAYS,
         START_DATE,
         YEAR2_START,
     )
-    from data import build_dataset, build_focus_calibrated_dataset
+    from data import build_dataset, build_focus_calibrated_dataset, build_focus_real_dataset
     from evaluation import run_evaluation
     from models import run_all_models
 
@@ -312,3 +314,98 @@ def run_multi_seed(seeds, budgets=BUDGETS, year2_start=YEAR2_START):
     all_event_results_df_full = pd.concat(all_events_parts, axis=0, ignore_index=True)
     all_event_results_df = all_event_results_df_full[EVENT_KEEP_COLS].copy()
     return all_model_metrics_df, all_event_results_df
+
+
+def run_one_seed_focus_real(
+    seed,
+    series,
+    split_ratio=FOCUS_REAL_SPLIT_RATIO,
+    budgets=BUDGETS,
+    n_events_low=1,
+    n_events_high=2,
+    verbose=False,
+):
+    """
+    한 seed에 대해 실제 FOCUS 시계열 기반 벤치마크를 수행한다.
+
+    합성 벤치마크와 달리 정상 베이스라인이 실제 클라우드 청구 데이터이다.
+    이상 이벤트만 합성 주입되며, seed마다 이상 위치만 달라진다.
+
+    Parameters
+    ----------
+    seed         : 이상 주입 난수 시드
+    series       : 실제 FOCUS 일별 cost pd.Series (DatetimeIndex)
+    split_ratio  : Year 1 (학습) 비율
+    budgets      : [(budget_float, percentile_float), ...]
+    n_events_low, n_events_high : 이벤트 수 범위
+
+    Returns
+    -------
+    metrics_df, events_df
+    """
+    if verbose:
+        print(f"[seed={seed}] building real-FOCUS dataset and scoring all models ...")
+
+    df_s, events_table_s, year2_start = build_focus_real_dataset(
+        series=series,
+        seed=seed,
+        split_ratio=split_ratio,
+        n_events_low=n_events_low,
+        n_events_high=n_events_high,
+    )
+
+    scores_s, _aux = run_all_models(
+        df_s, events_table_s, seed=seed, year2_start=year2_start, verbose=False,
+    )
+
+    metric_parts = []
+    event_parts = []
+    for budget, q in budgets:
+        _pred_s, met_s, ev_s = run_evaluation(
+            df_s, events_table_s, scores_s,
+            year2_start=year2_start, percentile=q,
+        )
+        met_s = met_s.copy()
+        met_s.insert(0, "seed", seed)
+        met_s.insert(1, "year1_fpr_target", budget)
+        met_s.insert(2, "threshold_quantile", q)
+        ev_s = ev_s.copy()
+        ev_s.insert(0, "seed", seed)
+        ev_s.insert(1, "year1_fpr_target", budget)
+        metric_parts.append(met_s)
+        event_parts.append(ev_s)
+
+    return (
+        pd.concat(metric_parts, axis=0, ignore_index=True),
+        pd.concat(event_parts, axis=0, ignore_index=True),
+    )
+
+
+def run_multi_seed_focus_real(
+    seeds,
+    series,
+    split_ratio=0.6,
+    budgets=BUDGETS,
+    n_events_low=1,
+    n_events_high=2,
+):
+    """run_one_seed_focus_real을 여러 seed에 대해 실행하여 결과를 합친다."""
+    all_metrics_parts = []
+    all_events_parts = []
+    for seed in seeds:
+        metrics_s, events_s = run_one_seed_focus_real(
+            seed=seed,
+            series=series,
+            split_ratio=split_ratio,
+            budgets=budgets,
+            n_events_low=n_events_low,
+            n_events_high=n_events_high,
+        )
+        all_metrics_parts.append(metrics_s)
+        all_events_parts.append(events_s)
+
+    all_model_metrics_df = pd.concat(all_metrics_parts, axis=0, ignore_index=True)
+    all_event_results_df = pd.concat(all_events_parts, axis=0, ignore_index=True)
+    # EVENT_KEEP_COLS에 없는 컬럼 무시 (실제 데이터에서 year2_start가 다를 수 있음)
+    keep = [c for c in EVENT_KEEP_COLS if c in all_event_results_df.columns]
+    return all_model_metrics_df, all_event_results_df[keep]

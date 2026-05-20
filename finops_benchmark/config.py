@@ -21,7 +21,7 @@ N_EVENTS_HIGH = 6
 DF_COLUMNS = [
     "date", "day", "y", "y_expected_baseline",
     "is_anomaly", "anomaly_type", "intensity_level", "event_id",
-    "excess_cost", "score", "alert",
+    "excess_cost", "cost_impact", "score", "alert",
 ]
 
 OUTPUT_DIR = "./outputs"
@@ -59,6 +59,12 @@ FOCUS_CACHE_DIR = ".focus_cache"
 # Cost column is auto-selected in focus_loader (EffectiveCost preferred,
 # BilledCost fallback); no single fixed column is configured here.
 FOCUS_GROUP_BY = ["ProviderName", "ServiceCategory"]
+
+# Real-FOCUS benchmark settings
+FOCUS_REAL_SPLIT_RATIO = 0.5      # Year 1 (train) proportion of available days
+FOCUS_REAL_N_EVENTS_LOW = 1       # min events per (type, intensity) in Year 2
+FOCUS_REAL_N_EVENTS_HIGH = 3      # exclusive upper bound: rng.integers(low, high) -> [1, 2]
+FOCUS_REAL_MIN_YEAR2_DAYS = 10    # minimum Year 2 evaluation days
 
 PAPER_DPI = 200
 PAPER_COLOR_MAP = {

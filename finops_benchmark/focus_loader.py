@@ -72,6 +72,28 @@ def load_focus_data(path: str) -> pd.DataFrame:
     return df
 
 
+def aggregate_total_daily(
+    df: pd.DataFrame,
+    cost_col: str = _EFF_COST_COL,
+    min_days: int = 30,
+) -> pd.Series:
+    """Aggregate ALL services into a single total daily cost series.
+
+    Sums every billing line item across all providers/services per calendar day.
+    Returns a pd.Series indexed by date, sorted chronologically.
+
+    Raises ``ValueError`` if the result has fewer than ``min_days`` observations.
+    """
+    series = df.groupby("_date")[cost_col].sum().sort_index().clip(lower=0.0)
+    series.name = "total_daily_cost"
+    if len(series) < min_days:
+        raise ValueError(
+            f"FOCUS 데이터가 {len(series)}일치밖에 없습니다 (최소 {min_days}일 필요). "
+            "더 긴 데이터를 사용하세요."
+        )
+    return series
+
+
 def aggregate_daily(
     df: pd.DataFrame,
     cost_col: str = _EFF_COST_COL,

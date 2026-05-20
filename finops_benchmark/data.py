@@ -8,6 +8,8 @@ try:
         BASE_LEVEL,
         CONTEXTUAL_LEVELS,
         DF_COLUMNS,
+        FOCUS_REAL_MIN_YEAR2_DAYS,
+        FOCUS_REAL_SPLIT_RATIO,
         GRADUAL_LEVELS,
         MONTHLY_GROWTH,
         N_DAYS,
@@ -27,6 +29,8 @@ except ImportError:
         BASE_LEVEL,
         CONTEXTUAL_LEVELS,
         DF_COLUMNS,
+        FOCUS_REAL_MIN_YEAR2_DAYS,
+        FOCUS_REAL_SPLIT_RATIO,
         GRADUAL_LEVELS,
         MONTHLY_GROWTH,
         N_DAYS,
@@ -112,6 +116,8 @@ def inject_anomalies(
     gradual_levels=GRADUAL_LEVELS,
     n_events_low=N_EVENTS_LOW,
     n_events_high=N_EVENTS_HIGH,
+    gradual_min_days=7,
+    gradual_max_days=14,
     seed=RANDOM_SEED,
 ):
     """
@@ -136,7 +142,8 @@ def inject_anomalies(
     Returns
     -------
     y_modified     : (n,) 이상 주입 후 시계열
-    excess_cost    : (n,) y_modified - y_expected
+    excess_cost    : (n,) y_modified - y_expected (noise 포함 관측 잔차)
+    cost_impact    : (n,) 실제 주입된 초과 비용 (정상 구간=0, 평가 기준값)
     is_anomaly     : (n,) bool
     anomaly_type   : (n,) object, {"none","spike","contextual","gradual"}
     intensity_level: (n,) object, {"none","low","mid","high"}
@@ -246,7 +253,7 @@ def inject_anomalies(
     for level, daily_pct in gradual_levels.items():
         n_inject = int(rng.integers(n_events_low, n_events_high))
         for _ in range(n_inject):
-            length = int(rng.integers(7, 15))    # 7~14일
+            length = int(rng.integers(gradual_min_days, gradual_max_days + 1))
             start = _find_slot(length, buffer=3)
             if start is None:
                 continue
@@ -336,13 +343,92 @@ def build_dataset(seed=RANDOM_SEED, n_days=N_DAYS, year2_start=YEAR2_START,
     df["score"] = np.nan
     df["alert"] = False
     # DF_COLUMNS는 Cell 5에 정의되어 있음. 아래 한 줄로 동적 확장.
-    extended_cols = list(DF_COLUMNS)
-    if "cost_impact" not in extended_cols:
-        insert_at = extended_cols.index("excess_cost") + 1
-        extended_cols.insert(insert_at, "cost_impact")
-    df = df[extended_cols]
+    df = df[list(DF_COLUMNS)]
 
     return df, events_df
+
+
+def build_focus_real_dataset(
+    series,
+    seed=RANDOM_SEED,
+    split_ratio=FOCUS_REAL_SPLIT_RATIO,
+    n_events_low=1,
+    n_events_high=2,
+):
+    """
+    실제 FOCUS 일별 시계열에 합성 이상을 주입하여 레이블 있는 데이터셋을 반환한다.
+
+    합성 벤치마크와 달리 정상 베이스라인이 실제 클라우드 청구 데이터이므로
+    분포 가정 없이 실제 소비 패턴을 그대로 사용한다.
+    이상 이벤트만 합성으로 주입되며 ground-truth 레이블이 유지된다.
+
+    Parameters
+    ----------
+    series      : 일별 cost pd.Series (DatetimeIndex)
+    seed        : 이상 주입 난수 시드
+    split_ratio : Year 1 (학습) 비율. Year 2 (평가) = 1 - split_ratio.
+    n_events_low, n_events_high : (type, intensity) 조합당 최소/최대 이벤트 수
+
+    Returns
+    -------
+    df          : 표준 DataFrame
+    events_df   : 이벤트 메타 DataFrame
+    year2_start : 실제 사용된 Year 2 시작 day index
+    """
+    n_days = len(series)
+    year2_start = int(n_days * split_ratio)
+    year2_days = n_days - year2_start
+
+    if year2_days < FOCUS_REAL_MIN_YEAR2_DAYS:
+        raise ValueError(
+            f"Year 2 구간이 {year2_days}일로 너무 짧습니다 "
+            f"(최소 {FOCUS_REAL_MIN_YEAR2_DAYS}일 필요). "
+            "더 긴 FOCUS 데이터를 사용하거나 split_ratio를 낮추세요."
+        )
+    if year2_days < 30:
+        import warnings
+        warnings.warn(
+            f"Year 2 구간이 {year2_days}일로 매우 짧습니다. "
+            "30일 이상의 데이터를 권장합니다. 결과 신뢰도가 낮을 수 있습니다.",
+            UserWarning, stacklevel=2,
+        )
+
+    # Gradual 이벤트 길이를 Year 2 창 크기에 비례하여 조정
+    gradual_max = min(14, max(3, year2_days // 5))
+    gradual_min = max(3, gradual_max // 2)
+
+    dates = pd.DatetimeIndex(series.index)
+    y_actual = series.values.astype(float)
+    y_expected = y_actual.copy()  # 실제 데이터가 곧 주입 전 baseline
+
+    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df) = inject_anomalies(
+        y_actual, y_expected,
+        year2_start=year2_start,
+        n_events_low=n_events_low,
+        n_events_high=n_events_high,
+        gradual_min_days=gradual_min,
+        gradual_max_days=gradual_max,
+        seed=seed,
+    )
+
+    df = pd.DataFrame({
+        "date": dates,
+        "day": np.arange(n_days),
+        "y": y_mod,
+        "y_expected_baseline": y_expected,
+        "is_anomaly": is_anom,
+        "anomaly_type": a_type,
+        "intensity_level": a_int,
+        "event_id": ev_id,
+        "excess_cost": excess,
+        "cost_impact": cost_imp,
+    })
+    df["score"] = np.nan
+    df["alert"] = False
+
+    df = df[list(DF_COLUMNS)]
+
+    return df, events_df, year2_start
 
 
 def build_focus_calibrated_dataset(
@@ -401,10 +487,6 @@ def build_focus_calibrated_dataset(
     df["score"] = np.nan
     df["alert"] = False
 
-    extended_cols = list(DF_COLUMNS)
-    if "cost_impact" not in extended_cols:
-        insert_at = extended_cols.index("excess_cost") + 1
-        extended_cols.insert(insert_at, "cost_impact")
-    df = df[extended_cols]
+    df = df[list(DF_COLUMNS)]
 
     return df, events_df
