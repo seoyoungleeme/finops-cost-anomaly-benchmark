@@ -1,0 +1,52 @@
+service,date,cost,z_score
+AWS / Analytics,2024-09-04,2.0,2000000000.0
+AWS / Analytics,2024-09-07,5.0,4.196
+AWS / Analytics,2024-09-25,6.0,7.559
+AWS / Compute,2024-09-12,-49.0,-3.887
+AWS / Compute,2024-09-13,-495.0,-6.739
+AWS / Compute,2024-09-24,1133.0,5.368
+AWS / Databases,2024-09-04,14.0,-3.231
+AWS / Databases,2024-09-15,37.0,3.305
+AWS / Other,2024-09-20,87.64,11.458
+Microsoft / AI and Machine Learning,2024-09-07,13.489383,-3.043
+Microsoft / AI and Machine Learning,2024-09-19,8.081256,-133862.935
+Microsoft / Analytics,2024-09-06,2231.054262,-10.466
+Microsoft / Analytics,2024-09-07,2231.052208,-2.508
+Microsoft / Analytics,2024-09-15,2231.054487,292.471
+Microsoft / Analytics,2024-09-19,1302.246143,-1082832.357
+Microsoft / Compute,2024-09-04,524.427354,-2.649
+Microsoft / Compute,2024-09-19,306.796206,-1606.188
+Microsoft / Databases,2024-09-16,366.846775,4.645
+Microsoft / Databases,2024-09-19,210.640786,-91.019
+Microsoft / Integration,2024-09-08,110.444418,-2.802
+Microsoft / Integration,2024-09-18,110.444433,-15.924
+Microsoft / Integration,2024-09-19,78.200517,-225052.55
+Microsoft / Management and Governance,2024-09-06,16.549031,-3.103
+Microsoft / Management and Governance,2024-09-12,16.464622,-2.953
+Microsoft / Management and Governance,2024-09-18,16.401309,-2.665
+Microsoft / Management and Governance,2024-09-19,0.562892,-629.311
+Microsoft / Networking,2024-09-04,121.629075,-27.73
+Microsoft / Networking,2024-09-06,121.628218,-4.213
+Microsoft / Networking,2024-09-07,121.593753,-52.626
+Microsoft / Networking,2024-09-08,121.544652,-5.901
+Microsoft / Networking,2024-09-15,121.551405,6.727
+Microsoft / Networking,2024-09-19,79.954255,-11508.387
+Microsoft / Other,2024-09-09,234.844571,2.569
+Microsoft / Other,2024-09-16,228.513246,-2.602
+Microsoft / Other,2024-09-19,134.69056,-43.222
+Microsoft / Security,2024-09-19,0.793628,-15.264
+Microsoft / Storage,2024-09-04,38.395051,2.959
+Microsoft / Storage,2024-09-14,38.466759,3.809
+Microsoft / Storage,2024-09-19,25.148753,-252.47
+Microsoft / Web,2024-09-06,219.352872,174.0
+Microsoft / Web,2024-09-11,219.352878,81.64
+Microsoft / Web,2024-09-12,219.352887,6.898
+Microsoft / Web,2024-09-13,219.352932,10.125
+Microsoft / Web,2024-09-19,145.333066,-3892799.53
+Oracle / Compute,2024-09-21,140.0,18.142
+Oracle / Web,2024-09-13,12.0,4000000000.0
+Oracle / Web,2024-09-14,4.0,-2.683
+Oracle / Web,2024-09-21,28.0,7.906
+Oracle / nan,2024-09-13,3.0,1000000000.0
+Oracle / nan,2024-09-14,1.0,-2.683
+Oracle / nan,2024-09-21,7.0,7.906

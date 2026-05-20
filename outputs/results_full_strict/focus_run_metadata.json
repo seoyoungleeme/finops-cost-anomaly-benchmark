@@ -1,0 +1,101 @@
+{
+  "run_timestamp_utc": "2026-05-20T16:38:51.084579+00:00",
+  "git_commit": "24028163689721f90f974bc7fe5dd65cdf9cc3e8",
+  "runtime_seconds": 151.8,
+  "library_versions": {
+    "python": "3.12.4",
+    "numpy": "1.26.4",
+    "pandas": "2.2.2",
+    "scipy": "1.13.1",
+    "prophet": "1.3.0",
+    "sklearn": "1.4.2",
+    "torch": "2.5.1+cpu"
+  },
+  "cli_args": {
+    "url": "https://media.githubusercontent.com/media/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_data_table.csv.gz",
+    "cache_dir": ".focus_cache",
+    "group_by": "ProviderName,ServiceCategory",
+    "n_seeds": 3,
+    "min_days": 21,
+    "min_nonzero_days": 14,
+    "min_mean_cost": 1.0,
+    "output_dir": "outputs/results_full_strict",
+    "figure_dir": "outputs/figures_full_strict",
+    "verbose": false
+  },
+  "config": {
+    "N_DAYS": 730,
+    "YEAR2_START": 365,
+    "SEEDS_USED": [
+      0,
+      1,
+      2
+    ],
+    "BUDGETS": [
+      [
+        0.005,
+        99.5
+      ],
+      [
+        0.01,
+        99.0
+      ],
+      [
+        0.02,
+        98.0
+      ]
+    ],
+    "FOCUS_GROUP_BY": [
+      "ProviderName",
+      "ServiceCategory"
+    ],
+    "eval_far_target": 0.01
+  },
+  "study_type": "focus_calibrated_synthetic",
+  "real_data_claim": "Real FOCUS data is used only to calibrate synthetic baseline statistics; anomaly labels remain synthetic.",
+  "data_inventory": {
+    "_added_post_hoc": true,
+    "_post_hoc_note": "Derived from .focus_cache/focus_data_table.csv.gz on 2026-05-21 by scripts/build_focus_inventory.py; the file is the same gzip used by this run.",
+    "source_url": "https://media.githubusercontent.com/media/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_data_table.csv.gz",
+    "cache_path": ".focus_cache/focus_data_table.csv.gz",
+    "bytes": 496305507,
+    "rows": 5488359,
+    "columns": 44,
+    "date_min": "2024-03-20",
+    "date_max": "2024-09-30",
+    "unique_billing_days": 32,
+    "provider_row_counts": {
+      "AWS": 5181336,
+      "Microsoft": 270492,
+      "Oracle": 36416,
+      "Google Cloud": 115
+    }
+  },
+  "n_service_groups": 4,
+  "n_fallback_services": 0,
+  "services": [
+    "AWS / Compute",
+    "AWS / Databases",
+    "AWS / Other",
+    "Oracle / Compute"
+  ],
+  "interpretation_warnings": [
+    "Observed FOCUS histories are short (max 30 days); this supports baseline calibration realism, not a long-horizon real-data benchmark.",
+    "FOCUS benchmark results here are calibrated-synthetic: real FOCUS data sets the baseline statistics, but anomaly labels remain synthetic."
+  ],
+  "output_figures": [
+    "focus_f1_bar.png",
+    "focus_dollar_recall_bar.png",
+    "focus_ace_bar.png",
+    "focus_mctd_bar.png",
+    "focus_f1_by_budget.png",
+    "focus_mctd_by_budget.png",
+    "focus_far_by_budget.png",
+    "focus_metric_overview.png",
+    "focus_detection_by_type.png",
+    "focus_detection_heatmap.png",
+    "focus_mctd_by_type.png",
+    "focus_radar.png",
+    "focus_rank_slope.png"
+  ]
+}

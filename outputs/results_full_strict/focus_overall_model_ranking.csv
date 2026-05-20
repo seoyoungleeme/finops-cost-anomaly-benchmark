@@ -1,0 +1,5 @@
+model_name,f1,f1_rank,cost_weighted_recall,dollar_recall_rank,alert_cost_efficiency,ace_rank,mean_mctd,mctd_rank
+Prophet,0.5132,1,0.9553,1,101.33,3,15.08,2
+IsolationForest,0.4461,2,0.8822,3,157.63,2,26.31,3
+LSTM_AE,0.3172,3,0.9191,2,37.72,4,12.14,1
+EWMA,0.2226,4,0.5543,4,484.66,1,174.12,4

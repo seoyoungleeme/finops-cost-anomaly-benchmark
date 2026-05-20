@@ -1,0 +1,17 @@
+service,model_name,f1_mean,f1_rank,cost_weighted_recall_mean,dollar_recall_rank,alert_cost_efficiency_mean,ace_rank,mean_mctd_mean,mctd_rank
+AWS / Compute,EWMA,0.1969,4,0.5125,4,1319.4994,1,449.4611,4
+AWS / Compute,IsolationForest,0.5044,2,0.9754,3,384.6476,2,56.4628,3
+AWS / Compute,LSTM_AE,0.3726,3,0.9952,1,87.1609,4,19.0212,1
+AWS / Compute,Prophet,0.5053,1,0.9888,2,240.9117,3,40.9364,2
+AWS / Databases,EWMA,0.2008,4,0.5975,4,37.3891,1,12.4167,4
+AWS / Databases,IsolationForest,0.3053,2,0.6463,3,24.9047,2,9.3102,3
+AWS / Databases,LSTM_AE,0.2053,3,0.703,2,4.9303,4,8.0888,2
+AWS / Databases,Prophet,0.4316,1,0.8432,1,20.8185,3,5.784,1
+AWS / Other,EWMA,0.286,4,0.5852,4,346.7055,1,148.2063,4
+AWS / Other,IsolationForest,0.4931,2,0.9565,3,146.4375,2,25.764,3
+AWS / Other,LSTM_AE,0.3184,3,0.9838,2,41.0236,4,17.9324,2
+AWS / Other,Prophet,0.59,1,0.996,1,93.1114,3,8.0254,1
+Oracle / Compute,EWMA,0.2065,4,0.5219,4,235.0652,1,86.3785,4
+Oracle / Compute,IsolationForest,0.4816,2,0.9504,3,74.5285,2,13.6867,3
+Oracle / Compute,LSTM_AE,0.3725,3,0.9944,1,17.7517,4,3.5185,1
+Oracle / Compute,Prophet,0.5259,1,0.9931,2,50.4643,3,5.56,2

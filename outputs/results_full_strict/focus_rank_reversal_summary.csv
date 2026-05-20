@@ -1,0 +1,8 @@
+model_a,model_b,n_services,n_metric_pairs,n_reversal_instances,total_instances,reversal_rate,f1_vs_cost_weighted_recall,f1_vs_alert_cost_efficiency,f1_vs_mean_mctd,cost_weighted_recall_vs_alert_cost_efficiency,cost_weighted_recall_vs_mean_mctd,alert_cost_efficiency_vs_mean_mctd
+EWMA,IsolationForest,4,6,12,24,0.5,0/4,4/4,0/4,4/4,0/4,4/4
+EWMA,LSTM_AE,4,6,12,24,0.5,0/4,4/4,0/4,4/4,0/4,4/4
+EWMA,Prophet,4,6,12,24,0.5,0/4,4/4,0/4,4/4,0/4,4/4
+IsolationForest,LSTM_AE,4,6,16,24,0.6667,4/4,0/4,4/4,4/4,0/4,4/4
+IsolationForest,Prophet,4,6,12,24,0.5,0/4,4/4,0/4,4/4,0/4,4/4
+LSTM_AE,Prophet,4,6,8,24,0.3333,2/4,0/4,2/4,2/4,0/4,2/4
+ALL_PAIRS,(all),4,6,72,144,0.5,,,,,,

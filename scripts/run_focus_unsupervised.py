@@ -16,6 +16,7 @@ Usage
 -----
   python scripts/run_focus_unsupervised.py
   python scripts/run_focus_unsupervised.py --sigma 2.0 --window 5
+  python scripts/run_focus_unsupervised.py --min-days 14 --min-nonzero-days 7 --min-mean-cost 0.1
 """
 
 import argparse
@@ -60,7 +61,13 @@ def main(args: argparse.Namespace) -> None:
 
     # Aggregate
     group_by = [g.strip() for g in args.group_by.split(",")]
-    daily_dict = aggregate_daily(raw_df, group_by=group_by)
+    daily_dict = aggregate_daily(
+        raw_df,
+        group_by=group_by,
+        min_days=args.min_days,
+        min_nonzero_days=args.min_nonzero_days,
+        min_mean_cost=args.min_mean_cost,
+    )
     print(f"  Service groups (after filtering): {len(daily_dict)}")
 
     if not daily_dict:
@@ -109,8 +116,8 @@ def main(args: argparse.Namespace) -> None:
             )
 
     # Save
-    alerts_path = output_dir / "focus_unsupervised_alerts.csv"
-    summary_path = output_dir / "focus_unsupervised_summary.csv"
+    alerts_path = output_dir / f"{args.output_prefix}_alerts.csv"
+    summary_path = output_dir / f"{args.output_prefix}_summary.csv"
     pd.DataFrame(alert_rows).to_csv(alerts_path, index=False)
     pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
 
@@ -136,4 +143,20 @@ if __name__ == "__main__":
     )
     parser.add_argument("--window", type=int, default=7, help="Rolling window size in days")
     parser.add_argument("--sigma", type=float, default=2.5, help="Alert threshold (std deviations)")
+    parser.add_argument(
+        "--min-days", type=int, default=21,
+        help="Min calendar days a service group must have to pass filtering",
+    )
+    parser.add_argument(
+        "--min-nonzero-days", type=int, default=14,
+        help="Min days with cost > 0 a service group must have",
+    )
+    parser.add_argument(
+        "--min-mean-cost", type=float, default=1.0,
+        help="Min mean daily cost (in billing currency) for a service group",
+    )
+    parser.add_argument(
+        "--output-prefix", default="focus_unsupervised",
+        help="Prefix for alerts/summary CSV files under outputs/results",
+    )
     main(parser.parse_args())

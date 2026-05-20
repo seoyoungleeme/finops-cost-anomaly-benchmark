@@ -1,0 +1,5 @@
+service,days_observed,base_level,monthly_growth,noise_pct,used_fallback,f1_mean,auprc_mean,cost_weighted_recall_mean,mean_mctd_mean,alert_cost_efficiency_mean,false_alarm_rate_mean
+AWS / Compute,30,156.47,0.1,0.15,False,0.3948,0.477,0.868,141.4704,508.0549,0.2902
+AWS / Databases,30,18.5,-0.02,0.15,False,0.2858,0.4651,0.6975,8.8999,22.0107,0.0764
+AWS / Other,30,54.04,0.1,0.15,False,0.4219,0.5161,0.8804,49.982,156.8195,0.2328
+Oracle / Compute,30,24.67,0.1,0.15,False,0.3966,0.4967,0.865,27.2859,94.4524,0.2593

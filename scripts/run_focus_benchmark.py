@@ -95,6 +95,37 @@ def _safe_label(label: str) -> str:
     return label.replace("/", "_").replace(" ", "_").replace(",", "_")
 
 
+def _build_interpretation_warnings(stats_all: dict) -> list[str]:
+    """Return plain-language cautions about how strongly to interpret FOCUS results."""
+    warnings: list[str] = []
+    n_services = len(stats_all)
+    if n_services < 3:
+        warnings.append(
+            f"Only {n_services} service group(s) survived filtering; cross-service "
+            "ranking and rank-reversal summaries are exploratory."
+        )
+
+    days_observed = [int(st.get("days_observed", 0)) for st in stats_all.values()]
+    if days_observed and max(days_observed) < 60:
+        warnings.append(
+            f"Observed FOCUS histories are short (max {max(days_observed)} days); "
+            "this supports baseline calibration realism, not a long-horizon real-data benchmark."
+        )
+
+    n_fallback = sum(1 for st in stats_all.values() if st.get("used_fallback", False))
+    if n_fallback > 0:
+        warnings.append(
+            f"{n_fallback} service group(s) fell back to global calibration stats; "
+            "treat service-specific conclusions cautiously."
+        )
+
+    warnings.append(
+        "FOCUS benchmark results here are calibrated-synthetic: real FOCUS data sets "
+        "the baseline statistics, but anomaly labels remain synthetic."
+    )
+    return warnings
+
+
 def _get_git_commit() -> str:
     try:
         r = subprocess.run(
@@ -280,6 +311,56 @@ def _build_anomaly_type_tables(
     return type_df, intensity_df
 
 
+def _build_top_model_disagreement(
+    per_service_metrics: dict,
+    year1_fpr_target: float = _EVAL_FAR_TARGET,
+) -> pd.DataFrame:
+    """For each service, compare the top model by F1 against top by other metrics.
+
+    Columns: service, top_f1, top_dollar_recall, top_ace, top_mctd,
+             disagree_dollar_recall, disagree_ace, disagree_mctd, n_disagreements.
+    Final row aggregates disagreement rates across all services.
+    """
+    metric_specs = {
+        "top_dollar_recall": ("cost_weighted_recall", False),
+        "top_ace":           ("alert_cost_efficiency", False),
+        "top_mctd":          ("mean_mctd",             True),   # ascending=True → lower wins
+    }
+
+    rows = []
+    for service, df in per_service_metrics.items():
+        sub = df[df["year1_fpr_target"] == year1_fpr_target]
+        means = sub.groupby("model_name")[
+            ["f1", "cost_weighted_recall", "alert_cost_efficiency", "mean_mctd"]
+        ].mean()
+
+        top_f1 = means["f1"].idxmax()
+        row: dict = {"service": service, "top_f1": top_f1}
+        n_dis = 0
+        for col_name, (metric, ascending) in metric_specs.items():
+            top = means[metric].idxmin() if ascending else means[metric].idxmax()
+            row[col_name] = top
+            dis = top != top_f1
+            row[f"disagree_{col_name[4:]}"] = dis
+            n_dis += int(dis)
+        row["n_disagreements"] = n_dis
+        rows.append(row)
+
+    df_out = pd.DataFrame(rows)
+
+    # Aggregate summary row
+    if not df_out.empty:
+        dis_cols = [c for c in df_out.columns if c.startswith("disagree_")]
+        summary = {"service": "OVERALL_RATE", "top_f1": "", "top_dollar_recall": "",
+                   "top_ace": "", "top_mctd": ""}
+        for c in dis_cols:
+            summary[c] = round(float(df_out[c].mean()), 4)
+        summary["n_disagreements"] = round(float(df_out["n_disagreements"].mean()), 2)
+        df_out = pd.concat([df_out, pd.DataFrame([summary])], ignore_index=True)
+
+    return df_out
+
+
 def _build_rank_reversal_table(
     per_service_metrics: dict,
     year1_fpr_target: float = _EVAL_FAR_TARGET,
@@ -326,15 +407,42 @@ def main(args: argparse.Namespace) -> None:
     t_start = time.time()
     run_ts = datetime.now(timezone.utc).isoformat()
 
-    output_dir = Path(RESULTS_DIR)
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Download & load
     print("Step 1/5  Downloading FOCUS sample data...")
     path = download_focus_data(url=args.url, cache_dir=args.cache_dir)
     print(f"  Loaded from {path}")
+    source_column_count = int(pd.read_csv(path, nrows=0).shape[1])
     raw_df = load_focus_data(str(path))
     print(f"  Rows: {len(raw_df):,}  |  Columns: {raw_df.shape[1]}")
+
+    # Snapshot the source inventory so reviewers can verify report data claims
+    # (rows, columns, date range, providers) without rerunning the load.
+    _date_series = raw_df["_date"].dropna()
+    provider_counts_series = (
+        raw_df.get("ProviderName", pd.Series(dtype=object))
+        .fillna("(missing)")
+        .value_counts()
+    )
+    data_inventory = {
+        "source_url": args.url,
+        "cache_path": str(path).replace("\\", "/"),
+        "bytes": int(Path(path).stat().st_size),
+        "rows": int(len(raw_df)),
+        "columns": source_column_count,
+        "date_min": (
+            _date_series.min().strftime("%Y-%m-%d") if not _date_series.empty else None
+        ),
+        "date_max": (
+            _date_series.max().strftime("%Y-%m-%d") if not _date_series.empty else None
+        ),
+        "unique_billing_days": int(_date_series.dt.normalize().nunique()),
+        "provider_row_counts": {
+            str(k): int(v) for k, v in provider_counts_series.items()
+        },
+    }
 
     # 2. Aggregate
     group_by = [g.strip() for g in args.group_by.split(",")]
@@ -354,7 +462,7 @@ def main(args: argparse.Namespace) -> None:
         )
 
     if not daily_dict:
-        print("\nNo service groups survived filtering. Try lowering --min-days or --min-cost.")
+        print("\nNo service groups survived filtering. Try lowering --min-days, --min-nonzero-days, or --min-mean-cost.")
         return
 
     # 3. Calibrate
@@ -375,6 +483,12 @@ def main(args: argparse.Namespace) -> None:
             f"growth={st['monthly_growth']:+.3f}  "
             f"noise={st['noise_pct']:.3f}{fb}"
         )
+
+    interpretation_warnings = _build_interpretation_warnings(stats_all)
+    if interpretation_warnings:
+        print("\nInterpretation warnings:")
+        for warning in interpretation_warnings:
+            print(f"  - {warning}")
 
     save_calibration_stats(
         stats_all, str(output_dir / "focus_calibration_stats.csv")
@@ -458,6 +572,7 @@ def main(args: argparse.Namespace) -> None:
     all_metrics_pooled = pd.concat(
         list(per_service_metrics.values()), ignore_index=True
     )
+    pooled_summary_metrics = build_summary_metrics(all_metrics_pooled)
     overall_ranking = build_rank_comparison(all_metrics_pooled, year1_fpr_target=_EVAL_FAR_TARGET)
     overall_ranking.to_csv(
         output_dir / "focus_overall_model_ranking.csv", index=False
@@ -476,6 +591,12 @@ def main(args: argparse.Namespace) -> None:
     rr_summary.to_csv(output_dir / "focus_rank_reversal_summary.csv", index=False)
     print("\n  Rank reversal rates (model pairs across metrics & services):")
     print(rr_summary[["model_a", "model_b", "reversal_rate", "n_reversal_instances", "total_instances"]].to_string(index=False))
+
+    # focus_top_model_disagreement_summary.csv
+    disagreement_df = _build_top_model_disagreement(per_service_metrics)
+    disagreement_df.to_csv(
+        output_dir / "focus_top_model_disagreement_summary.csv", index=False
+    )
 
     # focus_anomaly_type_results.csv + focus_anomaly_intensity_results.csv
     per_service_events = {}
@@ -498,7 +619,7 @@ def main(args: argparse.Namespace) -> None:
 
     # Step 6: Figures
     print("\nStep 6/6  Generating figures...")
-    fig_dir = Path(RESULTS_DIR).parent / "figures"
+    fig_dir = Path(args.figure_dir) if args.figure_dir else output_dir.parent / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     configure_paper_matplotlib()
@@ -509,15 +630,9 @@ def main(args: argparse.Namespace) -> None:
         if per_service_events else pd.DataFrame()
     )
 
-    # Build core_metrics_df pooled across services
-    if core_rows:
-        core_df_for_figs = pd.concat(core_rows, ignore_index=True)
-    else:
-        core_df_for_figs = pd.DataFrame()
-
     canonical_order = (
-        get_canonical_model_order(core_df_for_figs)
-        if not core_df_for_figs.empty else None
+        get_canonical_model_order(pooled_summary_metrics)
+        if not pooled_summary_metrics.empty else None
     )
 
     fig_specs = []
@@ -529,9 +644,9 @@ def main(args: argparse.Namespace) -> None:
         ("alert_cost_efficiency","Alert Cost Efficiency ($)", "focus_ace_bar.png"),
         ("mean_mctd",            "Mean MCTD ($)",            "focus_mctd_bar.png"),
     ]:
-        if not core_df_for_figs.empty:
+        if not pooled_summary_metrics.empty:
             plot_paper_bar(
-                core_df_for_figs, metric,
+                pooled_summary_metrics, metric,
                 str(fig_dir / fname),
                 year1_fpr_target=_EVAL_FAR_TARGET,
                 ylabel=ylabel,
@@ -545,18 +660,18 @@ def main(args: argparse.Namespace) -> None:
         ("mean_mctd",     "Mean MCTD ($)",        "focus_mctd_by_budget.png", True),
         ("false_alarm_rate","False Alarm Rate",   "focus_far_by_budget.png",  True),
     ]:
-        if not core_df_for_figs.empty:
+        if not pooled_summary_metrics.empty:
             plot_paper_line(
-                core_df_for_figs, metric,
+                pooled_summary_metrics, metric,
                 str(fig_dir / fname),
                 ylabel=ylabel, lower_is_better=lower,
             )
             fig_specs.append(fname)
 
     # 2x2 metric overview
-    if not core_df_for_figs.empty:
+    if not pooled_summary_metrics.empty:
         plot_focus_metric_overview(
-            core_df_for_figs, str(fig_dir / "focus_metric_overview.png")
+            pooled_summary_metrics, str(fig_dir / "focus_metric_overview.png")
         )
         fig_specs.append("focus_metric_overview.png")
 
@@ -590,6 +705,9 @@ def main(args: argparse.Namespace) -> None:
 
     # focus_run_metadata.json
     elapsed = round(time.time() - t_start, 1)
+    n_fallback_services = sum(
+        1 for st in stats_all.values() if st.get("used_fallback", False)
+    )
     metadata = {
         "run_timestamp_utc": run_ts,
         "git_commit": _get_git_commit(),
@@ -602,11 +720,18 @@ def main(args: argparse.Namespace) -> None:
             "SEEDS_USED": SEEDS[: args.n_seeds],
             "BUDGETS": BUDGETS,
             "FOCUS_GROUP_BY": FOCUS_GROUP_BY,
-            "FOCUS_DATA_URL": FOCUS_DATA_URL,
             "eval_far_target": _EVAL_FAR_TARGET,
         },
+        "study_type": "focus_calibrated_synthetic",
+        "real_data_claim": (
+            "Real FOCUS data is used only to calibrate synthetic baseline statistics; "
+            "anomaly labels remain synthetic."
+        ),
+        "data_inventory": data_inventory,
         "n_service_groups": len(stats_all),
+        "n_fallback_services": n_fallback_services,
         "services": list(stats_all.keys()),
+        "interpretation_warnings": interpretation_warnings,
         "output_figures": fig_specs,
     }
     meta_path = output_dir / "focus_run_metadata.json"
@@ -641,6 +766,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--min-mean-cost", type=float, default=1.0,
         help="Min mean daily cost (in billing currency) for a service group",
+    )
+    parser.add_argument(
+        "--output-dir", default=RESULTS_DIR,
+        help="Directory for benchmark result CSV/JSON files",
+    )
+    parser.add_argument(
+        "--figure-dir", default=None,
+        help="Directory for generated figures; defaults to a figures sibling of --output-dir",
     )
     parser.add_argument("--verbose", action="store_true")
     main(parser.parse_args())

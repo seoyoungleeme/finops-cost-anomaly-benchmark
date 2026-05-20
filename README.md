@@ -1,86 +1,162 @@
 # FinOps Cost Anomaly Benchmark
 
-## Why This Project Exists
+Cost anomalies in cloud systems are quiet but expensive: a forgotten GPU
+instance, a runaway data-transfer job, an autoscaling misconfiguration, or a
+billing correction can change spend before anyone notices. FinOps teams need
+detectors that catch these events early, but public cloud-cost anomaly research
+has a structural problem: real billing data is sensitive and public FOCUS
+billing samples do not include ground-truth anomaly labels.
 
-Cloud bills break in expensive, silent ways: a misconfigured autoscaler, a
-forgotten GPU instance, a runaway data-transfer job. By the time the monthly
-invoice arrives, the money is already spent. FinOps teams therefore need
-detectors that catch cost anomalies early — but choosing a detector is
-currently guesswork, because **there is no public, labeled benchmark for
-cloud-cost anomaly detection.**
+This repository builds a reproducible benchmark for that gap. It uses real
+FOCUS billing data to calibrate cloud-cost baselines, injects controlled labeled
+anomalies, and evaluates anomaly detectors with FinOps-aware metrics such as
+dollar recall, mean cost-to-detect, and alert cost efficiency.
 
-The reason no such benchmark exists is structural: real billing data (including
-the FOCUS open billing standard) ships with **no ground-truth anomaly labels**.
-Without labels you cannot measure recall, detection delay, or how much money a
-detector would have saved. You can only eyeball spikes.
+For the full research narrative, see [report.md](report.md).
 
-This project closes that gap. It generates daily cloud-cost series with
-**controlled, labeled anomalies** (spike / contextual / gradual, at low / mid /
-high intensity), and can **calibrate the baseline to real FOCUS billing
-statistics** so the synthetic series resembles real spend while keeping exact
-ground truth. It then compares four representative detectors under a strict
-leakage-free protocol and scores them with **cost-aware** metrics, not just
-classification accuracy — because in FinOps the goal is not "detect anomalies,"
-it is "catch the *expensive* ones *fast* without drowning the team in alerts."
+## Core Claim
 
-## What It Is
+This is not a raw real-billing labeled benchmark. FOCUS data is used as the
+real-world source for baseline statistics, while anomaly labels are created by
+controlled injection.
 
-The project started as a notebook experiment and is now organized as importable
-Python modules plus command-line runners. It generates daily cloud-cost series,
-injects labeled anomalies, scores them with several models, and evaluates the
-results with point-wise, event-wise, and cost-aware metrics.
+```text
+Primary quantitative result:
+  FOCUS-calibrated synthetic benchmark
+
+External realism source:
+  Official FOCUS public billing sample data
+
+Raw real-data use:
+  Unsupervised sanity check only
+
+Not claimed:
+  Raw FOCUS labeled anomaly benchmark
+```
+
+That distinction matters because raw FOCUS data has no anomaly ground truth.
+Without labels, precision, recall, F1, detection delay, and MCTD cannot be
+computed honestly. The calibrated benchmark keeps labels available while making
+the normal spend pattern more realistic than a purely hand-designed synthetic
+series.
+
+## Current Research Artifacts
+
+The current report is based mainly on the full FOCUS strict benchmark:
+
+- FOCUS full sample: `5,488,359` rows, `44` source columns
+- Full strict service groups: `4`
+- Seeds: `0, 1, 2`
+- Main output directory: `outputs/results_full_strict/`
+- Main figure directory: `outputs/figures_full_strict/`
+- Inventory artifact: `outputs/focus_data_inventory.json`
+
+The full strict model ranking at the primary Year-1 false-alarm target of 1% is:
+
+| Model | F1 | Cost-Weighted Recall | Alert Cost Efficiency | Mean MCTD |
+|---|---:|---:|---:|---:|
+| Prophet | 0.5132 | 0.9553 | 101.33 | 15.08 |
+| IsolationForest | 0.4461 | 0.8822 | 157.63 | 26.31 |
+| LSTM_AE | 0.3172 | 0.9191 | 37.72 | 12.14 |
+| EWMA | 0.2226 | 0.5543 | 484.66 | 174.12 |
+
+Interpretation:
+
+- Prophet is strongest on F1 and dollar recall.
+- LSTM autoencoder has the lowest mean MCTD in the full strict run.
+- EWMA looks efficient per alert but misses too much dollar impact and detects
+  too late for FinOps loss reduction.
+- Model choice changes depending on whether the operational objective is
+  classification quality, dollars caught, cost-to-detect, or alert efficiency.
+
+## Data Strategy
+
+### FOCUS Data
+
+This project uses the official FOCUS Sample Data repository:
+
+- FOCUS site: <https://focus.finops.org/>
+- FOCUS Sample Data: <https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data>
+- FOCUS 1.0 sample folder: <https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/tree/main/FOCUS-1.0>
+
+Cached files used locally:
+
+| File | Role |
+|---|---|
+| `.focus_cache/focus_sample_10000.csv` | Initial small sample |
+| `.focus_cache/focus_sample_100000.csv.gz` | 100k relaxed robustness run |
+| `.focus_cache/focus_data_table.csv.gz` | Full strict benchmark and raw sanity check |
+
+The raw data cache is ignored by Git because the full file is large and can be
+downloaded again.
+
+### Inventory
+
+`scripts/build_focus_inventory.py` creates a reproducible inventory of cached
+FOCUS files:
+
+```bash
+python scripts/build_focus_inventory.py
+```
+
+Output:
+
+```text
+outputs/focus_data_inventory.json
+```
+
+The inventory records byte size, rows, source column count, date range, unique
+billing days, and provider row counts. This backs the report's data claims with
+a regenerable artifact.
 
 ## What It Runs
 
-### 1. Synthetic Benchmark
+### 1. FOCUS-Calibrated Synthetic Benchmark
 
-`scripts/run_benchmark.py` runs the main benchmark on generated 730-day daily
-cost series.
+`scripts/run_focus_benchmark.py` downloads or reuses a FOCUS CSV/CSV.GZ,
+aggregates it into daily service-level cost series, extracts calibration
+statistics, generates 730-day labeled benchmark series, and runs four detectors.
 
-The synthetic generator includes:
+Calibration parameters extracted from real FOCUS daily series:
 
-- linear spend trend
-- weekly seasonality
-- month-end cost effect
-- Gaussian noise
-- injected anomaly events in year 2 only
-- anomaly types: `spike`, `contextual`, `gradual`
-- intensity levels: `low`, `mid`, `high`
+- `base_level`: mean daily cost level
+- `monthly_growth`: clipped monthly trend estimate
+- `noise_pct`: clipped residual variation
+- `weekly_factor`: day-of-week multiplier
 
-### 2. FOCUS-Calibrated Benchmark
+Anomalies are injected only in Year 2:
 
-`scripts/run_focus_benchmark.py` downloads a FOCUS sample CSV, aggregates it to
-daily service-level cost series, extracts real-data calibration statistics, then
-generates labeled synthetic benchmark series using those statistics.
+- `spike`
+- `contextual`
+- `gradual`
 
-This keeps ground-truth labels available while making the baseline spend pattern
-more realistic.
+Each anomaly has `low`, `mid`, or `high` intensity and event-level cost impact.
 
-FOCUS handling currently:
+### 2. Raw FOCUS Sanity Check
 
-- downloads to `.focus_cache/`
-- prefers `EffectiveCost`, falling back to `BilledCost`
-- normalizes cost into an internal `_eff_cost` column
-- aggregates by `ProviderName,ServiceCategory` by default
-- filters very sparse or tiny service groups
-- clips calibration parameters to avoid impossible negative synthetic baselines
+`scripts/run_focus_unsupervised.py` applies a look-ahead-free rolling z-score
+detector directly to raw aggregated FOCUS daily cost series. This produces
+flagged dates but no precision/recall/F1, because raw FOCUS has no anomaly
+ground truth.
 
-### 3. Real FOCUS Sanity Check
+### 3. Pure Synthetic Benchmark
 
-`scripts/run_focus_unsupervised.py` runs a simple look-ahead-free rolling
-z-score detector directly on the real aggregated FOCUS daily series. This is not
-a labeled benchmark; it is a sanity check for suspicious real cost spikes.
+`scripts/run_benchmark.py` keeps the original controlled synthetic benchmark.
+It is useful as a baseline/ablation, but the current report emphasizes the
+FOCUS-calibrated path.
 
-## Models
+## Compared Models
 
-The benchmark compares four scoring methods:
+The benchmark compares four representative detection paradigms:
 
-- `EWMA`: exponentially weighted moving average residual z-score
-- `IsolationForest`: calendar and lag-ratio feature based anomaly score
-- `Prophet`: forecast residual z-score
-- `LSTM_AE`: LSTM autoencoder reconstruction error
+| Model | Paradigm | Score |
+|---|---|---|
+| EWMA | Statistical residual baseline | EWMA residual z-score |
+| IsolationForest | Feature-based unsupervised learning | Calendar/lag/rolling-feature anomaly score |
+| LSTM_AE | Sequence reconstruction | Reconstruction error |
+| Prophet | Forecast residual | Forecast residual z-score |
 
-All models output a long-format score table:
+All models emit a long-format score table:
 
 ```text
 model_name, date, day, score
@@ -88,59 +164,56 @@ model_name, date, day, score
 
 ## Evaluation Protocol
 
-Year 1 contains no injected anomalies; all anomalies live in Year 2. The
-benchmark exploits this:
+The benchmark is leakage-free:
 
-- **Models are fit on Year 1 only.** Normalization statistics, training
-  windows, and forecast baselines never see Year-2 data.
-- **Thresholds are calibrated on Year 1 scores only.** Each
-  `year1_fpr_target` (0.5% / 1.0% / 2.0%) sets the alert threshold at the
-  matching Year-1 score percentile (99.5 / 99.0 / 98.0). That is, it caps the
-  false-alarm rate the model *would have produced on clean Year-1 data*.
-- **All metrics are computed on Year 2 only.**
+- Year 1 contains no injected anomalies.
+- Models fit only on Year 1.
+- Thresholds are calibrated only on Year-1 scores.
+- Anomalies occur only in Year 2.
+- All metrics are computed on Year 2.
 
-**Important — `year1_fpr_target` is a calibration knob, not a Year-2 alert
-budget.** The number of alerts a model fires in Year 2 is *not* constrained and
-varies widely by model (a poorly-calibrated model can fire on most days even at
-the strictest setting). This is intentional and is itself a reported result: it
-exposes operational alert-fatigue behavior that a fixed-budget evaluation would
-hide. For a threshold-free comparison, **AUPRC** is reported alongside the
-calibrated-threshold metrics.
+The primary threshold is a Year-1 false-alarm target of 1%, implemented as the
+99th percentile of each model's Year-1 scores. Additional calibration points use
+0.5% and 2.0%.
 
 Primary metrics:
 
-- precision, recall, F1 (calibrated-threshold, point-wise)
-- AUPRC from raw anomaly scores (threshold-free ranking quality)
+- precision, recall, F1
+- AUPRC from raw anomaly scores
 - false alarm rate
 - event recall
 - mean detection delay
-- cost-weighted recall — share of *dollars* of anomaly caught, not just events
-- mean cost-to-detect (`mean_mctd`) — money burned before the first alert
-- alert cost efficiency — dollars of anomaly caught per alert raised
-
-The three `year1_fpr_target` settings (0.5% / 1.0% / 2.0%) trace the
-strict-to-lenient calibration curve; 1.0% is the primary operating point used
-for the paper-ready tables and figures.
+- cost-weighted recall
+- mean cost-to-detect (`mean_mctd`)
+- alert cost efficiency
 
 ## Repository Structure
 
 ```text
 finops_benchmark/
   config.py              shared constants, paths, benchmark settings
-  data.py                synthetic data generation and anomaly injection
+  data.py                synthetic generation and anomaly injection
   models.py              EWMA, IsolationForest, Prophet, LSTM-AE scoring
-  evaluation.py          thresholding and metric computation
+  evaluation.py          thresholding and metrics
   experiment.py          seed loops, summaries, rank tables
   focus_loader.py        FOCUS download, parsing, daily aggregation
   focus_calibration.py   calibration stats from FOCUS daily series
-  visualization.py       exploratory and paper-ready figures
+  visualization.py       benchmark figures
   sanity.py              validation helpers
 
 scripts/
-  run_benchmark.py           full synthetic benchmark
-  run_focus_benchmark.py     FOCUS-calibrated synthetic benchmark
-  run_focus_unsupervised.py  direct unsupervised FOCUS sanity check
+  run_benchmark.py           pure synthetic benchmark
+  run_focus_benchmark.py     FOCUS-calibrated benchmark
+  run_focus_unsupervised.py  raw FOCUS rolling z-score sanity check
+  build_focus_inventory.py   cached FOCUS file inventory
 
+outputs/
+  focus_data_inventory.json
+  results_full_strict/
+  figures_full_strict/
+  results/
+
+report.md                research report and presentation notes
 FinOps.ipynb             notebook driver
 ```
 
@@ -162,78 +235,113 @@ Dependencies:
 - torch
 - tqdm
 
-On Windows, the code routes CmdStan/Prophet temporary files through `.tmp/` to
-avoid failures caused by non-ASCII user-profile paths.
+On Windows, Prophet/CmdStan temporary files are routed through `.tmp/` to avoid
+failures caused by non-ASCII user-profile paths.
 
-## Run Commands
+## Reproduce The Current Main Results
 
-### Synthetic Benchmark
+### 1. Download/verify FOCUS inventory
+
+If the cache already exists:
 
 ```bash
-python scripts/run_benchmark.py
+python scripts/build_focus_inventory.py
+```
+
+The current full sample was downloaded from GitHub's media endpoint because the
+normal raw URL returns a Git LFS pointer for the full gzip file:
+
+```text
+https://media.githubusercontent.com/media/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_data_table.csv.gz
+```
+
+### 2. Full strict FOCUS-calibrated benchmark
+
+```bash
+python scripts/run_focus_benchmark.py \
+  --url https://media.githubusercontent.com/media/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_data_table.csv.gz \
+  --group-by ProviderName,ServiceCategory \
+  --min-days 21 \
+  --min-nonzero-days 14 \
+  --min-mean-cost 1.0 \
+  --n-seeds 3 \
+  --output-dir outputs/results_full_strict \
+  --figure-dir outputs/figures_full_strict
+```
+
+Main outputs:
+
+```text
+outputs/results_full_strict/focus_run_metadata.json
+outputs/results_full_strict/focus_calibration_stats.csv
+outputs/results_full_strict/focus_service_summary.csv
+outputs/results_full_strict/focus_core_metrics_by_service.csv
+outputs/results_full_strict/focus_overall_model_ranking.csv
+outputs/results_full_strict/focus_anomaly_type_results.csv
+outputs/results_full_strict/focus_anomaly_intensity_results.csv
+outputs/results_full_strict/focus_rank_reversal_by_service.csv
+outputs/results_full_strict/focus_rank_reversal_summary.csv
+outputs/results_full_strict/focus_top_model_disagreement_summary.csv
+outputs/figures_full_strict/*.png
+```
+
+### 3. 100k relaxed robustness run
+
+```bash
+python scripts/run_focus_benchmark.py \
+  --url https://raw.githubusercontent.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_sample_100000.csv.gz \
+  --group-by ProviderName,ServiceCategory \
+  --min-days 14 \
+  --min-nonzero-days 7 \
+  --min-mean-cost 0.1 \
+  --n-seeds 5
+```
+
+This writes to `outputs/results/` and `outputs/figures/` by default. The report
+uses the summary CSV/metadata from this run, not every per-service raw event
+file.
+
+### 4. Raw full FOCUS sanity check
+
+```bash
+python scripts/run_focus_unsupervised.py \
+  --url https://media.githubusercontent.com/media/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_data_table.csv.gz \
+  --group-by ProviderName,ServiceCategory \
+  --min-days 14 \
+  --min-nonzero-days 7 \
+  --min-mean-cost 0.1 \
+  --window 7 \
+  --sigma 2.5 \
+  --output-prefix focus_unsupervised_full_relaxed
 ```
 
 Outputs:
 
 ```text
-outputs/results/all_model_metrics.csv
-outputs/results/summary_metrics.csv
-outputs/results/all_event_results.csv
-outputs/results/paper_core_results_budget1pct.csv
-outputs/results/paper_rank_comparison_budget1pct.csv
-outputs/figures/paper_f1_bar_budget1pct.png
-outputs/figures/paper_dollar_recall_bar_budget1pct.png
-outputs/figures/paper_ace_bar_budget1pct.png
-outputs/figures/paper_f1_by_budget.png
-outputs/figures/paper_mctd_by_budget.png
-outputs/figures/paper_far_by_budget.png
+outputs/results/focus_unsupervised_full_relaxed_alerts.csv
+outputs/results/focus_unsupervised_full_relaxed_summary.csv
 ```
 
-### FOCUS-Calibrated Benchmark
+## Git And Outputs
 
-```bash
-python scripts/run_focus_benchmark.py
-```
-
-Useful options:
-
-```bash
-python scripts/run_focus_benchmark.py --n-seeds 3
-python scripts/run_focus_benchmark.py --group-by ProviderName,ServiceName
-python scripts/run_focus_benchmark.py --min-days 14 --min-nonzero-days 7 --min-mean-cost 0.1
-```
-
-Outputs:
+Large raw FOCUS data and most generated intermediate files stay ignored:
 
 ```text
-outputs/results/focus_calibration_stats.csv
-outputs/results/focus_metrics_<service>.csv
-outputs/results/focus_events_<service>.csv
-outputs/results/focus_service_summary.csv
-outputs/results/focus_core_metrics_by_service.csv
-outputs/results/focus_rank_reversal_by_service.csv
-outputs/results/focus_overall_model_ranking.csv
+.focus_cache/
+.tmp/
+data/external/
+data/processed/
 ```
 
-### Direct FOCUS Unsupervised Check
+Only the research-facing output artifacts are unignored:
 
-```bash
-python scripts/run_focus_unsupervised.py
-```
+- `outputs/focus_data_inventory.json`
+- selected CSV/JSON files under `outputs/results_full_strict/`
+- full strict figures under `outputs/figures_full_strict/`
+- selected 100k relaxed and raw sanity-check CSV/JSON files under `outputs/results/`
 
-Useful options:
-
-```bash
-python scripts/run_focus_unsupervised.py --sigma 2.0 --window 5
-python scripts/run_focus_unsupervised.py --group-by ProviderName,ServiceName
-```
-
-Outputs:
-
-```text
-outputs/results/focus_unsupervised_alerts.csv
-outputs/results/focus_unsupervised_summary.csv
-```
+The detailed per-service `focus_metrics_*` and `focus_events_*` files remain
+ignored to keep the repository focused and lightweight.
 
 ## Minimal Python Usage
 
@@ -268,27 +376,10 @@ service, stats = next(iter(stats_all.items()))
 df, events_df = build_focus_calibrated_dataset(stats, seed=0)
 ```
 
-## Generated Files and Git
-
-Downloaded FOCUS data and generated outputs are intentionally not committed.
-The following paths are ignored:
-
-```text
-.focus_cache/
-.tmp/
-outputs/
-data/external/
-data/processed/
-.claude/settings.local.json
-```
-
-Use `outputs/results/` and `outputs/figures/` for local experiment artifacts.
-
 ## Notes
 
-- FOCUS sample data is short, so direct real-data anomaly detection is only a
-  sanity check.
-- The FOCUS-calibrated path is the recommended way to combine real spend
-  patterns with labeled anomaly evaluation.
-- Runtime depends mostly on Prophet and the LSTM autoencoder. The default full
-  synthetic run uses 10 seeds; the default FOCUS-calibrated run uses 5 seeds.
+- FOCUS histories in the public samples are short, so direct raw-data anomaly
+  detection is a sanity check, not a benchmark.
+- FOCUS-calibrated synthetic evaluation is the recommended quantitative path.
+- Always inspect `focus_run_metadata.json` before interpreting a result table;
+  it records the data URL, service groups, fallback count, seeds, and inventory.

@@ -1,0 +1,13 @@
+model_name,anomaly_type,n_events,detection_rate,mean_detection_delay,mean_mctd,dollar_recall
+EWMA,spike,636.0,0.4387,0.06,3.1566,0.7899
+IsolationForest,spike,636.0,0.7343,0.07,0.7875,0.9478
+LSTM_AE,spike,636.0,0.6698,0.08,0.6782,0.9594
+Prophet,spike,636.0,0.7972,0.03,0.4825,0.966
+EWMA,contextual,672.0,0.3497,0.04,5.3269,0.4109
+IsolationForest,contextual,672.0,0.7842,0.06,1.1365,0.8955
+LSTM_AE,contextual,672.0,0.7961,0.04,0.5761,0.947
+Prophet,contextual,672.0,0.8824,0.04,0.4864,0.9483
+EWMA,gradual,420.0,0.2048,5.78,13.0787,0.2502
+IsolationForest,gradual,420.0,0.631,4.51,5.1354,0.874
+LSTM_AE,gradual,420.0,0.65,2.46,2.6925,0.918
+Prophet,gradual,420.0,0.8286,3.86,2.6145,0.9881

@@ -8,6 +8,34 @@ __pycache__/
 data/external/
 data/processed/
 outputs/
+!outputs/
+!outputs/focus_data_inventory.json
+outputs/figures/
+outputs/figures_full_strict/*
+!outputs/results_full_strict/
+outputs/results_full_strict/*
+!outputs/results_full_strict/focus_run_metadata.json
+!outputs/results_full_strict/focus_calibration_stats.csv
+!outputs/results_full_strict/focus_calibration_summary.csv
+!outputs/results_full_strict/focus_service_summary.csv
+!outputs/results_full_strict/focus_core_metrics_by_service.csv
+!outputs/results_full_strict/focus_overall_model_ranking.csv
+!outputs/results_full_strict/focus_anomaly_type_results.csv
+!outputs/results_full_strict/focus_anomaly_intensity_results.csv
+!outputs/results_full_strict/focus_rank_reversal_by_service.csv
+!outputs/results_full_strict/focus_rank_reversal_summary.csv
+!outputs/results_full_strict/focus_top_model_disagreement_summary.csv
+!outputs/figures_full_strict/
+!outputs/figures_full_strict/*.png
+!outputs/results/
+outputs/results/*
+!outputs/results/focus_run_metadata.json
+!outputs/results/focus_overall_model_ranking.csv
+!outputs/results/focus_service_summary.csv
+!outputs/results/focus_anomaly_type_results.csv
+!outputs/results/focus_anomaly_intensity_results.csv
+!outputs/results/focus_unsupervised_full_relaxed_alerts.csv
+!outputs/results/focus_unsupervised_full_relaxed_summary.csv
 
 # C extensions
 *.so

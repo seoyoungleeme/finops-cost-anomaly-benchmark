@@ -1,0 +1,6 @@
+service,top_f1,top_dollar_recall,disagree_dollar_recall,top_ace,disagree_ace,top_mctd,disagree_mctd,n_disagreements
+AWS / Compute,Prophet,LSTM_AE,1.0,EWMA,1.0,LSTM_AE,1.0,3.0
+AWS / Databases,Prophet,Prophet,0.0,EWMA,1.0,Prophet,0.0,1.0
+AWS / Other,Prophet,Prophet,0.0,EWMA,1.0,Prophet,0.0,1.0
+Oracle / Compute,Prophet,LSTM_AE,1.0,EWMA,1.0,LSTM_AE,1.0,3.0
+OVERALL_RATE,,,0.5,,1.0,,0.5,2.0

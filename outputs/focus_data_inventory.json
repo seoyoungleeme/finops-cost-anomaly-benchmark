@@ -1,0 +1,53 @@
+{
+  "generated_at_utc": "2026-05-20T17:39:00.981750+00:00",
+  "cache_dir": ".focus_cache",
+  "files": [
+    {
+      "file": "focus_data_table.csv.gz",
+      "path": ".focus_cache/focus_data_table.csv.gz",
+      "bytes": 496305507,
+      "rows": 5488359,
+      "columns": 44,
+      "date_min": "2024-03-20",
+      "date_max": "2024-09-30",
+      "unique_billing_days": 32,
+      "provider_row_counts": {
+        "AWS": 5181336,
+        "Microsoft": 270492,
+        "Oracle": 36416,
+        "Google Cloud": 115
+      }
+    },
+    {
+      "file": "focus_sample_10000.csv",
+      "path": ".focus_cache/focus_sample_10000.csv",
+      "bytes": 7529214,
+      "rows": 10000,
+      "columns": 44,
+      "date_min": "2024-09-01",
+      "date_max": "2024-09-30",
+      "unique_billing_days": 30,
+      "provider_row_counts": {
+        "AWS": 9441,
+        "Microsoft": 491,
+        "Oracle": 68
+      }
+    },
+    {
+      "file": "focus_sample_100000.csv.gz",
+      "path": ".focus_cache/focus_sample_100000.csv.gz",
+      "bytes": 9173495,
+      "rows": 100000,
+      "columns": 44,
+      "date_min": "2024-03-21",
+      "date_max": "2024-09-30",
+      "unique_billing_days": 31,
+      "provider_row_counts": {
+        "AWS": 94351,
+        "Microsoft": 4964,
+        "Oracle": 683,
+        "Google Cloud": 2
+      }
+    }
+  ]
+}

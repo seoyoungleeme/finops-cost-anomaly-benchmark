@@ -2,6 +2,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 try:
     from .config import BUDGETS, PAPER_COLOR_MAP, PAPER_DPI, SEEDS, YEAR2_START
