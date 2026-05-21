@@ -371,85 +371,94 @@ def fig_intensity_progression():
 # -----------------------------------------------------------------------------
 def fig_framework():
     with plt.rc_context({**PLT_STYLE, "axes.grid": False}):
-        fig, ax = plt.subplots(figsize=(13, 6))
+        fig, ax = plt.subplots(figsize=(13, 6.5))
         ax.set_xlim(0, 13)
-        ax.set_ylim(0, 6)
+        ax.set_ylim(0, 6.2)
         ax.axis("off")
         ax.set_title(
             "Research Framework: FOCUS-Calibrated FinOps Anomaly Benchmark",
             fontsize=13, fontweight="bold", pad=12,
         )
 
+        # pad is kept small so the drawn box stays close to its (x, y, w, h)
+        # footprint; layout below already leaves explicit vertical gaps.
+        PAD = 0.04
+
         def box(ax, x, y, w, h, label, sub="", color="#2E9B5E", fs=10):
             rect = mpatches.FancyBboxPatch(
-                (x, y), w, h, boxstyle="round,pad=0.15",
+                (x, y), w, h, boxstyle=f"round,pad={PAD}",
                 facecolor=color + "22", edgecolor=color, linewidth=2,
             )
             ax.add_patch(rect)
-            ax.text(x + w/2, y + h/2 + (0.18 if sub else 0),
+            ax.text(x + w/2, y + h/2 + (0.22 if sub else 0),
                     label, ha="center", va="center",
                     fontsize=fs, fontweight="bold", color=color)
             if sub:
-                ax.text(x + w/2, y + h/2 - 0.28, sub,
+                ax.text(x + w/2, y + h/2 - 0.34, sub,
                         ha="center", va="center", fontsize=7.5, color="#444")
 
-        def arrow(ax, x1, y1, x2, y2, label=""):
+        def arrow(ax, x1, y1, x2, y2, label="", lw=1.8):
             ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
-                arrowprops=dict(arrowstyle="->", color="#555", lw=1.8))
+                arrowprops=dict(arrowstyle="-|>", color="#555", lw=lw))
             if label:
                 mx, my = (x1+x2)/2, (y1+y2)/2
-                ax.text(mx, my+0.15, label, ha="center", fontsize=7.5, color="#555")
+                ax.text(mx, my+0.20, label, ha="center", fontsize=7.5,
+                        color="#555")
 
-        # Data sources
-        box(ax, 0.3, 3.8, 3.2, 1.8,
-            "FOCUS Sample Data", "5.49M rows\n(AWS / Microsoft / Oracle)\n32 billing days",
+        # -- Row 1: data pipeline (y 4.20 - 5.70) ---------------------------
+        box(ax, 0.30, 4.20, 3.30, 1.50,
+            "FOCUS Sample Data",
+            "5.49M rows\n(AWS / Microsoft / Oracle)\n32 billing days",
             color="#1B6CA8", fs=9)
-
-        # Calibration
-        box(ax, 4.1, 4.0, 3.0, 1.4,
-            "Calibration Stats", "base_level / growth\nnoise_pct / weekly_factor",
+        box(ax, 4.40, 4.35, 3.00, 1.20,
+            "Calibration Stats",
+            "base_level / growth\nnoise_pct / weekly_factor",
             color="#E07B39", fs=9)
-
-        # Synthetic benchmark
-        box(ax, 7.9, 3.8, 4.8, 1.8,
-            "FOCUS-Calibrated Benchmark", "730-day labeled series (4 services)\nControlled anomaly injection\nspike / contextual / gradual x low/mid/high",
+        box(ax, 8.20, 4.20, 4.50, 1.50,
+            "FOCUS-Calibrated Benchmark",
+            "730-day labeled series (4 services)\n"
+            "controlled anomaly injection\n"
+            "spike / contextual / gradual x low/mid/high",
             color="#2E9B5E", fs=9)
 
-        # Models
-        for i, (m, lbl) in enumerate([
-            ("Prophet",         "Prophet"),
-            ("IsolationForest", "Isolation\nForest"),
-            ("LSTM_AE",         "LSTM-AE"),
-            ("SeasonalNaiveMAD","Seasonal\nNaiveMAD"),
-            ("EWMA",            "EWMA"),
-        ]):
-            bx = 0.3 + i * 2.48
-            box(ax, bx, 0.4, 2.2, 1.3, lbl, color=PALETTE[m], fs=8)
-            arrow(ax, bx + 1.1, 1.73, bx + 1.1, 1.73, "")
-
-        # Evaluation
-        box(ax, 3.9, 1.8, 5.2, 1.35,
+        # -- Row 2: evaluation, wide bar spanning all detectors (y 2.25-3.25)
+        box(ax, 0.30, 2.25, 12.40, 1.00,
             "FinOps-Aware Evaluation",
-            "F1 / Dollar Recall / MCTD / Alert Cost Efficiency",
-            color="#9B59B6", fs=9)
+            "F1   /   Dollar Recall   /   MCTD   /   Alert Cost Efficiency",
+            color="#9B59B6", fs=10)
 
-        # Arrows
-        arrow(ax, 3.5, 4.7, 4.1, 4.7, "extract\nstatistics")
-        arrow(ax, 7.1, 4.7, 7.9, 4.7, "calibrate\nbaseline")
-        arrow(ax, 9.5, 3.8, 9.5, 3.15, "Year-1 fit\nYear-2 eval")
-        arrow(ax, 9.5, 3.15, 6.5, 3.15, "")
+        # -- Row 3: five detectors (y 0.45 - 1.40) --------------------------
+        models = [
+            ("Prophet",          "Prophet"),
+            ("IsolationForest",  "Isolation Forest"),
+            ("LSTM_AE",          "LSTM-AE"),
+            ("SeasonalNaiveMAD", "Seasonal NaiveMAD"),
+            ("EWMA",             "EWMA"),
+        ]
+        slot_w = 13.0 / 5
+        box_w = 2.30
+        centers = []
+        for i, (m, lbl) in enumerate(models):
+            cx = slot_w * (i + 0.5)
+            centers.append(cx)
+            box(ax, cx - box_w/2, 0.45, box_w, 0.95, lbl,
+                color=PALETTE[m], fs=8.5)
 
-        for i in range(5):
-            bx = 0.3 + i * 2.48 + 1.1
-            ax.annotate("", xy=(bx, 1.73), xytext=(bx, 1.8),
-                arrowprops=dict(arrowstyle="<-", color="#555", lw=1.2))
+        # -- arrows ----------------------------------------------------------
+        # data pipeline (horizontal)
+        arrow(ax, 3.65, 4.95, 4.35, 4.95, "extract\nstatistics")
+        arrow(ax, 7.45, 4.95, 8.15, 4.95, "calibrate\nbaseline")
+        # benchmark -> evaluation (vertical, lands on the wide bar)
+        arrow(ax, 10.45, 4.15, 10.45, 3.32, "Year-1 fit\nYear-2 eval")
+        # each detector -> evaluation (gap is now 0.85 units, fully clear)
+        for cx in centers:
+            arrow(ax, cx, 1.45, cx, 2.20, lw=1.3)
 
-        # Legend note
-        ax.text(0.3, 0.15,
+        # footnote
+        ax.text(0.30, 0.06,
             "Raw FOCUS -> sanity check only (no ground-truth labels).  "
-            "Quantitative metrics computed on FOCUS-calibrated synthetic benchmark.",
-            fontsize=8, color="#666", style="italic"
-        )
+            "Quantitative metrics computed on the FOCUS-calibrated synthetic benchmark.",
+            fontsize=8, color="#666", style="italic")
 
         fig.tight_layout()
         savefig(fig, "fig7_framework.png")

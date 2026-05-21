@@ -22,6 +22,12 @@
 
 > 본 연구는 FOCUS 실제 청구 데이터를 직접 labeled benchmark로 사용하지 않는다. FOCUS 데이터에는 anomaly 정답 라벨이 없기 때문이다. 대신 FOCUS에서 실제 비용 패턴 통계량을 추출하여 benchmark baseline을 보정하고, 통제된 anomaly injection으로 평가 가능한 ground truth를 확보했다. 따라서 본 실험은 "FOCUS-calibrated labeled benchmark"이며, raw FOCUS 결과는 정량 성능 평가가 아니라 sanity check로 해석한다.
 
+전체 연구 흐름은 다음 그림 1에 요약된다. FOCUS 공개 sample → calibration 통계량 추출 → FOCUS-보정 benchmark 생성 → 5개 탐지 모델 → FinOps 지표 평가의 5단계 파이프라인이며, raw FOCUS는 정답 라벨이 없어 sanity check 경로로만 분기한다.
+
+![전체 연구 프레임워크](outputs/presentation_figures/fig7_framework.png)
+
+*그림 1. 전체 연구 프레임워크. 공개 FOCUS billing sample(5.49M rows, AWS/Microsoft/Oracle)에서 base_level·growth·noise·weekly_factor를 추출해 730일 labeled benchmark를 보정하고, spike/contextual/gradual × low/mid/high anomaly를 Year 2에만 주입한 뒤 Prophet·IsolationForest·LSTM-AE·SeasonalNaiveMAD·EWMA를 F1·dollar recall·MCTD·alert cost efficiency로 비교한다.*
+
 ## 2. 연구 배경 및 필요성
 
 ### 2.1 클라우드 비용 이상 탐지가 중요한 이유
@@ -436,6 +442,12 @@ paper-ready primary setting은 1.0% Year-1 false alarm target이다.
 
 운영 환산. Year 1의 정상 일수가 365이므로 1% Year-1 FAR은 service group 1개당 연 평균 약 3.65건의 false alert에 해당한다. 100개의 service group을 운영하는 조직이라면 false alert만으로 연 약 365건 (≈ 매일 1건)이 발생한다는 의미이며, 실 운영에서는 triage 비용·alert fatigue를 고려해 budget 선택을 조정해야 한다.
 
+그림 2는 0.5%, 1.0%, 2.0% 세 budget에서 모델별 F1을 비교한 결과다. budget을 바꿔도 모델 간 상대 순위(Prophet > IsolationForest ≈ LSTM_AE > SeasonalNaiveMAD > EWMA)는 거의 유지되며, 이는 본 연구의 결론이 특정 threshold 선택에 민감하지 않다는 robustness 근거다.
+
+![budget별 F1](outputs/figures_full_strict/focus_f1_by_budget.png)
+
+*그림 2. Year-1 FAR target(0.5%/1.0%/2.0%)에 따른 모델별 F1 (mean ± std, full strict benchmark). budget이 완화될수록 F1은 소폭 상승하지만 모델 간 순위는 안정적으로 유지된다. 본 보고서의 primary setting은 1.0%이다.*
+
 ### 7.3 평가 지표
 
 표준 지표:
@@ -613,6 +625,18 @@ Primary setting: Year-1 FAR target = 1%. 값은 `mean ± std`이며, std는 serv
 - EWMA와 SeasonalNaiveMAD는 alert cost efficiency가 높지만, 이는 alert 수가 적은 데서 오는 ratio 효과일 수 있다. 두 모델 모두 cost-weighted recall과 avoided cost ratio가 낮아, 비용 손실 최소화 목적에는 위험하다.
 - IsolationForest는 F1 기준 2위이며, contextual anomaly와 high-intensity spike에서 안정적인 성능을 보인다.
 
+그림 3은 위 표의 네 가지 핵심 지표(F1, cost-weighted recall, MCTD, alert cost efficiency)를 한 화면에 정리한 대시보드다. F1과 dollar recall에서는 Prophet이 우위지만, alert cost efficiency 막대만 보면 EWMA·SeasonalNaiveMAD가 가장 길어, 어떤 지표를 보느냐에 따라 "최고 모델"이 뒤바뀐다는 점이 한눈에 드러난다.
+
+![모델 성능 대시보드](outputs/presentation_figures/fig1_dashboard.png)
+
+*그림 3. full strict benchmark의 4-지표 대시보드 (FA target 1%, seeds 0-2, mean ± std). MCTD 패널은 lower=better이므로 축을 반전했다. EWMA/SeasonalNaiveMAD는 alert cost efficiency가 길지만 동시에 MCTD도 매우 크다 — alert 수가 적어 생기는 ratio 효과다.*
+
+그림 4는 F1과 cost-weighted recall(dollar recall)의 관계를 산점도로 보여준다. 두 지표가 완전히 일치한다면 모든 점이 대각선에 놓여야 하지만, LSTM_AE는 IsolationForest보다 F1이 낮은데도 dollar recall은 더 높아 두 순위가 어긋난다. 이는 "라벨 개수를 맞히는 능력"과 "비용 손실을 잡는 능력"이 다른 축임을 보여주는 본 연구의 핵심 그림이다.
+
+![F1 대 dollar recall](outputs/presentation_figures/fig3_f1_vs_dollar_recall.png)
+
+*그림 4. F1 점수와 cost-weighted recall의 산점도 (오차막대는 service × seed pooled std). 초록 음영은 dollar recall ≥ 0.85 구간이다. EWMA·SeasonalNaiveMAD는 두 축 모두 낮고, LSTM_AE와 IsolationForest는 F1-순위와 dollar-recall-순위가 교차한다.*
+
 ### 9.2 full FOCUS strict service-level 결과
 
 | service | F1 mean | AUPRC mean | cost-weighted recall mean | mean MCTD | avoided cost ratio |
@@ -650,6 +674,18 @@ Primary setting: Year-1 FAR target = 1%
 | Prophet | gradual | 108 | 0.8704 | 2.50 | 41.2631 | 0.9324 | 0.9905 |
 | SeasonalNaiveMAD | gradual | 108 | 0.3241 | 6.11 | 442.9035 | 0.2745 | 0.4494 |
 
+그림 5는 위 표의 dollar recall을 모델 × anomaly type heatmap으로 시각화한 것이다. 세 가지 deep-learning/forecasting 계열(Prophet, IsolationForest, LSTM_AE)은 모든 type에서 0.9 이상을 유지하지만, EWMA와 SeasonalNaiveMAD는 spike에서 gradual로 갈수록 색이 급격히 빨개진다. 즉 단순 residual·seasonal baseline은 점진적 비용 상승을 거의 놓친다.
+
+![anomaly type별 dollar recall heatmap](outputs/presentation_figures/fig4_type_heatmap.png)
+
+*그림 5. 모델 × anomaly type별 dollar recall heatmap. 초록=높음, 빨강=낮음. EWMA의 gradual dollar recall은 0.34로 가장 낮다.*
+
+그림 6은 같은 type 분해를 MCTD(탐지 전 누적 비용 손실) 관점에서 보여준다. Prophet·LSTM_AE는 모든 type에서 MCTD가 낮게 유지되는 반면, EWMA·SeasonalNaiveMAD는 gradual에서 $440 이상으로 치솟는다. 점진적 anomaly는 늦게 잡힐수록 손실이 누적되므로, gradual에서의 MCTD 격차가 실제 운영 비용 차이로 직결된다.
+
+![anomaly type별 MCTD](outputs/presentation_figures/fig5_mctd_by_type.png)
+
+*그림 6. anomaly type별 mean cost-to-detect (USD, lower=better). y축 scale이 type마다 다름에 유의 — gradual 패널은 spike 패널보다 약 4배 크다.*
+
 **intensity별 event count breakdown** (`focus_anomaly_intensity_results.csv` 기준):
 
 | anomaly type | low | mid | high | total |
@@ -659,6 +695,12 @@ Primary setting: Year-1 FAR target = 1%
 | gradual | 36 | 36 | 36 | 108 |
 
 최종 full strict run에서는 `--n-events-per-combo 3`을 적용해 intensity별 event count imbalance를 제거했다. 따라서 이전 run에서 gradual-high가 4건뿐이던 문제는 해결되었고, type × intensity 단위 비교의 표본 균형성이 개선됐다.
+
+그림 7은 anomaly 강도(low/mid/high)에 따른 dollar recall을 보여준다. high intensity에서는 다섯 모델 모두 비교적 잘 탐지하지만, low intensity로 갈수록 격차가 벌어진다. 특히 EWMA·SeasonalNaiveMAD의 low-intensity dollar recall은 0.1 안팎으로 거의 탐지하지 못한다. low-intensity anomaly는 눈에 띄지 않게 비용을 누적시키므로, 이 구간이 실제 FinOps 운영에서 가장 위험하다.
+
+![intensity별 dollar recall](outputs/presentation_figures/fig6_intensity_progression.png)
+
+*그림 7. 주입 강도별 dollar recall (anomaly type 평균). 점선은 0.80 기준선. low intensity에서 EWMA·SeasonalNaiveMAD는 기준선을 크게 밑돌며, Prophet·LSTM_AE만 0.80 이상을 유지한다.*
 
 해석:
 
@@ -720,6 +762,16 @@ raw full FOCUS relaxed sanity check에서는 18개 service group이 살아남았
 - 따라서 이 결과는 "실제 FOCUS 데이터에서도 비용 급변 날짜가 존재하며, 간단한 detector가 이를 flag할 수 있다"는 sanity check로만 사용한다.
 - 위 표의 `mean_daily_cost`는 30일 raw 평균(0인 날 포함)이고, Section 8.2의 `base_level`은 calibration 단계의 detrend·smoothing 후 산출한 평균 수준이다. 따라서 같은 service에서도 두 값은 일치하지 않을 수 있다 (예: AWS / Databases는 raw 16.50, calibrated base 18.50).
 
+그림 8과 그림 9는 raw FOCUS daily cost series에 rolling z-score detector(window 7, σ 2.5)를 적용한 case-study plot이다. 위 패널은 실제 일별 비용, 아래 패널은 rolling z-score이며, 빨간 점이 flag된 날짜다. 그림 8(AWS / Compute)에서는 비용이 음수로 떨어지는 날(credit/refund/correction으로 추정)과 급등하는 날이 함께 flag된다. 그림 9(Microsoft / Networking)에서는 거의 일정하던 비용이 마지막 날 급락하면서 rolling z가 -10,000 수준으로 튀어 flag된다. 두 그림 모두 "실제 FOCUS 비용 시계열에도 명백한 비용 급변일이 존재하며 간단한 detector가 이를 포착한다"는 것을 보여주는 sanity check이지, precision/recall 성능 근거가 아니다.
+
+![raw FOCUS sanity check - AWS/Compute](outputs/figures_full_strict/focus_unsupervised_full_relaxed_case_AWS___Compute.png)
+
+*그림 8. raw FOCUS sanity check — AWS / Compute. 9월 중순의 음수 비용일과 9월 말 급등일이 flag된다. 음수 비용은 credit·refund·billing correction 때문일 수 있어 anomaly 정답으로 해석하면 안 된다.*
+
+![raw FOCUS sanity check - Microsoft/Networking](outputs/figures_full_strict/focus_unsupervised_full_relaxed_case_Microsoft___Networking.png)
+
+*그림 9. raw FOCUS sanity check — Microsoft / Networking. 거의 평탄하던 비용이 관측 마지막 날 급락해 rolling z-score가 극단값을 보인다. sparse·짧은 history에서 detector가 어떻게 반응하는지를 보여주는 보조 사례다.*
+
 ## 10. 연구 질문과 연결
 
 ### RQ1. 탐지 패러다임별 anomaly type 성능 차이가 있는가
@@ -729,6 +781,12 @@ raw full FOCUS relaxed sanity check에서는 18개 service group이 살아남았
 ### RQ2. 표준 지표와 비용 가중 지표의 모델 순위가 다른가
 
 다르다. full strict benchmark에서 F1과 dollar recall 기준 1위는 Prophet이지만, alert cost efficiency 기준 1위는 EWMA다. 그러나 EWMA는 dollar recall이 0.5154, avoided cost ratio가 0.4590으로 낮고 mean MCTD도 245.75로 가장 나쁘다. 즉 alert efficiency만 보면 EWMA가 좋아 보이지만, 실제 비용 손실을 줄이는 관점에서는 부적절할 수 있다. 이는 FinOps 비용 anomaly detection에서 단일 분류 지표나 단일 efficiency 지표만으로 모델을 선택하면 운영상 잘못된 결론을 낼 수 있음을 보여준다.
+
+그림 10은 이 rank reversal을 직접 시각화한다. 네 지표(F1, dollar recall, MCTD, alert cost efficiency)에서 각 모델의 순위를 선으로 이으면, 선들이 서로 교차한다. EWMA의 선은 F1·dollar recall·MCTD에서 모두 #5(최하위)지만 alert cost efficiency에서는 #1로 급상승한다. 반대로 LSTM_AE는 MCTD #1에서 alert cost efficiency #5로 추락한다. 선이 교차한다는 것은 곧 "단일 지표로 모델을 고르면 다른 지표 기준으로는 최악의 모델을 고를 수 있다"는 뜻이며, 이것이 본 연구가 FinOps 평가에 다중 지표를 요구하는 핵심 근거다.
+
+![지표별 순위 역전](outputs/presentation_figures/fig2_rank_reversal.png)
+
+*그림 10. 지표 선택에 따른 모델 순위 역전. 세로축은 순위(#1 최상위 ~ #5 최하위), 가로축은 평가 지표. 선이 교차할수록 "단일 지표 모델 선택"의 위험이 크다. EWMA·SeasonalNaiveMAD는 alert cost efficiency에서만 상위권으로 올라간다.*
 
 ### RQ3. 탐지 메커니즘과 anomaly 유형의 mismatch가 있는가
 
@@ -812,23 +870,49 @@ outputs/results_full_strict/
 outputs/figures_full_strict/
 ```
 
-생성된 그림:
+생성된 그림 (`run_focus_benchmark.py`가 자동 생성하는 raw figure set):
 
-- `focus_f1_bar.png`
-- `focus_dollar_recall_bar.png`
-- `focus_ace_bar.png`
-- `focus_mctd_bar.png`
-- `focus_f1_by_budget.png`
-- `focus_mctd_by_budget.png`
-- `focus_far_by_budget.png`
-- `focus_metric_overview.png`
-- `focus_detection_by_type.png`
-- `focus_detection_heatmap.png`
-- `focus_mctd_by_type.png`
-- `focus_radar.png`
-- `focus_rank_slope.png`
-- `focus_unsupervised_full_relaxed_case_AWS___Compute.png`
-- `focus_unsupervised_full_relaxed_case_Microsoft___Networking.png`
+| 파일 | 내용 | 본 보고서 인용 |
+|---|---|---|
+| `focus_f1_bar.png` | 모델별 F1 막대 | 그림 3에 통합 |
+| `focus_dollar_recall_bar.png` | 모델별 dollar recall 막대 | 그림 3에 통합 |
+| `focus_ace_bar.png` | 모델별 alert cost efficiency 막대 | 그림 3에 통합 |
+| `focus_mctd_bar.png` | 모델별 mean MCTD 막대 | 그림 3에 통합 |
+| `focus_f1_by_budget.png` | budget별 F1 (mean±std) | **그림 2** |
+| `focus_mctd_by_budget.png` | budget별 MCTD | budget robustness 보조 |
+| `focus_far_by_budget.png` | budget별 false alarm rate | budget robustness 보조 |
+| `focus_metric_overview.png` | 4-지표 요약 (raw 버전) | 그림 3의 raw 대응본 |
+| `focus_detection_by_type.png` | anomaly type별 detection rate | 그림 5 보조 |
+| `focus_detection_heatmap.png` | model × type detection heatmap | 그림 5의 raw 대응본 |
+| `focus_mctd_by_type.png` | anomaly type별 MCTD | 그림 6의 raw 대응본 |
+| `focus_radar.png` | 모델별 다지표 radar chart | 종합 비교 보조 |
+| `focus_rank_slope.png` | 지표별 순위 slope chart | 그림 10의 raw 대응본 |
+| `focus_unsupervised_full_relaxed_case_AWS___Compute.png` | raw sanity case study | **그림 8** |
+| `focus_unsupervised_full_relaxed_case_Microsoft___Networking.png` | raw sanity case study | **그림 9** |
+
+### 13.1-b 발표용 정제 그림 (presentation figures)
+
+`scripts/make_presentation_figures.py`는 위 raw figure와 동일한 결과 CSV를 읽어, 색맹 안전 팔레트·통일된 라벨·주석 박스를 적용한 발표용 그림 7종을 `outputs/presentation_figures/`에 생성한다. 본 보고서에 임베드된 그림 1·3·4·5·6·7·10이 이 set에서 나온 것이다.
+
+```text
+outputs/presentation_figures/
+```
+
+| 파일 | 내용 | 본 보고서 |
+|---|---|---|
+| `fig1_dashboard.png` | 4-지표 성능 대시보드 | 그림 3 |
+| `fig2_rank_reversal.png` | 지표별 순위 역전 | 그림 10 |
+| `fig3_f1_vs_dollar_recall.png` | F1 대 dollar recall 산점도 | 그림 4 |
+| `fig4_type_heatmap.png` | anomaly type별 dollar recall heatmap | 그림 5 |
+| `fig5_mctd_by_type.png` | anomaly type별 MCTD | 그림 6 |
+| `fig6_intensity_progression.png` | 강도별 dollar recall | 그림 7 |
+| `fig7_framework.png` | 전체 연구 프레임워크 | 그림 1 |
+
+재생성 방법:
+
+```powershell
+python scripts/make_presentation_figures.py
+```
 
 ### 13.2 100k relaxed benchmark
 
