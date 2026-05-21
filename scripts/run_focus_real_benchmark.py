@@ -11,7 +11,7 @@ Data flow
   2. Sum ALL services into a single total daily cost series.
   3. Split: first split_ratio of days = Year 1 (training), rest = Year 2 (eval).
   4. Inject synthetic spike / contextual / gradual anomalies into Year 2 only.
-  5. Run EWMA / IsolationForest / Prophet / LSTM-AE across seeds & budgets.
+  5. Run EWMA / SeasonalNaiveMAD / IsolationForest / Prophet / LSTM-AE across seeds & budgets.
   6. Save results.
 
 Key difference from run_focus_benchmark.py (Approach A)
@@ -141,7 +141,7 @@ def main(args: argparse.Namespace) -> None:
     seeds = SEEDS[: args.n_seeds]
     print(
         f"\nStep 3/5  Running real-FOCUS benchmark "
-        f"({len(seeds)} seeds x {len(BUDGETS)} budgets x 4 models)..."
+        f"({len(seeds)} seeds x {len(BUDGETS)} budgets x 5 models)..."
     )
     print(f"  Baseline  : REAL FOCUS daily cost series (not synthetic)")
     print(f"  Anomalies : synthetic injection into Year 2 ({info['year2_days']} days)")

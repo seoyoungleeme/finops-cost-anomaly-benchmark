@@ -1,5 +1,6 @@
 model_name,f1,f1_rank,cost_weighted_recall,dollar_recall_rank,alert_cost_efficiency,ace_rank,mean_mctd,mctd_rank
-Prophet,0.5132,1,0.9553,1,101.33,3,15.08,2
-IsolationForest,0.4461,2,0.8822,3,157.63,2,26.31,3
-LSTM_AE,0.3172,3,0.9191,2,37.72,4,12.14,1
-EWMA,0.2226,4,0.5543,4,484.66,1,174.12,4
+Prophet,0.5798,1,0.9498,1,104.4,4,19.66,2
+IsolationForest,0.4353,2,0.8765,3,170.83,3,44.5,3
+LSTM_AE,0.3833,3,0.9076,2,43.49,5,19.47,1
+SeasonalNaiveMAD,0.2242,4,0.5966,4,487.52,2,210.7,4
+EWMA,0.1773,5,0.5154,5,511.36,1,245.75,5

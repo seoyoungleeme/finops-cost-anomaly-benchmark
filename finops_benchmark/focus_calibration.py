@@ -11,6 +11,11 @@ _MONTHLY_GROWTH_BOUNDS = (-0.02, 0.10)
 _NOISE_PCT_BOUNDS = (0.01, 0.15)
 _WEEKLY_FACTOR_BOUNDS = (0.25, 2.50)
 
+# A parameter is "clipping-saturated" when its raw value hits a bound exactly.
+# Saturation means the real signal may be stronger than what the model sees.
+def _is_saturated(raw: float, lo: float, hi: float) -> bool:
+    return raw <= lo or raw >= hi
+
 
 def _blend_weekly_factor(
     service_wf: Sequence[float],
@@ -55,13 +60,13 @@ def fit_series_statistics(series: pd.Series) -> Dict:
 
     # Conservative linear trend: tight clip because 30-day samples are noisy
     slope, intercept = np.polyfit(t, values, 1)
-    monthly_growth = float(
-        np.clip(slope * 30.0 / mean_val, *_MONTHLY_GROWTH_BOUNDS)
-    )
+    monthly_growth_raw = float(slope * 30.0 / mean_val)
+    monthly_growth = float(np.clip(monthly_growth_raw, *_MONTHLY_GROWTH_BOUNDS))
 
     # Noise from de-trended residuals
     residuals = values - (slope * t + intercept)
-    noise_pct = float(np.clip(np.std(residuals) / mean_val, *_NOISE_PCT_BOUNDS))
+    noise_pct_raw = float(np.std(residuals) / mean_val)
+    noise_pct = float(np.clip(noise_pct_raw, *_NOISE_PCT_BOUNDS))
 
     # Day-of-week pattern via actual calendar dates
     dows = pd.DatetimeIndex(series.index).dayofweek.values   # 0=Mon, 6=Sun
@@ -83,7 +88,13 @@ def fit_series_statistics(series: pd.Series) -> Dict:
     return {
         "base_level": mean_val,
         "monthly_growth": monthly_growth,
+        "monthly_growth_raw": monthly_growth_raw,
+        "monthly_growth_saturated": _is_saturated(
+            monthly_growth_raw, *_MONTHLY_GROWTH_BOUNDS
+        ),
         "noise_pct": noise_pct,
+        "noise_pct_raw": noise_pct_raw,
+        "noise_pct_saturated": _is_saturated(noise_pct_raw, *_NOISE_PCT_BOUNDS),
         "weekly_factor": weekly_factor,
     }
 
@@ -198,13 +209,25 @@ def save_calibration_stats(
 
     rows = []
     for label, st in stats_all.items():
+        mg_raw = st.get("monthly_growth_raw")
+        np_raw = st.get("noise_pct_raw")
         rows.append({
             "service": label,
             "days_observed": st.get("days_observed", ""),
             "nonzero_days": st.get("nonzero_days", ""),
             "base_level": round(st["base_level"], 4),
+            "monthly_growth_raw": round(mg_raw, 4) if mg_raw is not None else "",
             "monthly_growth": round(st["monthly_growth"], 4),
+            "monthly_growth_saturated": (
+                st.get("monthly_growth_saturated")
+                if mg_raw is not None else ""
+            ),
+            "noise_pct_raw": round(np_raw, 4) if np_raw is not None else "",
             "noise_pct": round(st["noise_pct"], 4),
+            "noise_pct_saturated": (
+                st.get("noise_pct_saturated")
+                if np_raw is not None else ""
+            ),
             "weekly_factor": json.dumps([round(w, 4) for w in st["weekly_factor"]]),
             "used_fallback": st.get("used_fallback", False),
             "fallback_reason": st.get("fallback_reason", ""),

@@ -196,6 +196,10 @@ def compute_event_results_one(pred_m, events_df, model_name):
             "detection_delay": detection_delay,
             "total_excess_cost": float(ev["total_excess_cost"]),
             "mctd": mctd,
+            "normalized_mctd": (
+                mctd / float(ev["total_excess_cost"])
+                if float(ev["total_excess_cost"]) > 0 else 0.0
+            ),
         })
 
     return pd.DataFrame(rows)
@@ -221,6 +225,9 @@ def compute_cost_weighted(event_res_one, total_alerts_year2):
     cost_recall = (detected_cost / total_cost) if total_cost > 0 else 0.0
     mean_mctd = (float(event_res_one["mctd"].mean())
                  if len(event_res_one) > 0 else 0.0)
+    total_mctd = float(event_res_one["mctd"].sum())
+    cost_to_detect_ratio = (total_mctd / total_cost) if total_cost > 0 else 0.0
+    avoided_cost_ratio = 1.0 - cost_to_detect_ratio if total_cost > 0 else 0.0
 
     if total_alerts_year2 <= 0:
         ace = 0.0
@@ -229,6 +236,8 @@ def compute_cost_weighted(event_res_one, total_alerts_year2):
 
     return {"cost_weighted_recall": cost_recall,
             "mean_mctd": mean_mctd,
+            "cost_to_detect_ratio": cost_to_detect_ratio,
+            "avoided_cost_ratio": avoided_cost_ratio,
             "alert_cost_efficiency": ace}
 
 def _dollar_recall_group(g):
@@ -283,6 +292,8 @@ def evaluate_one_model(pred_m, events_df, model_name, year2_start=YEAR2_START):
         "mean_detection_delay": mean_dd,
         "cost_weighted_recall": cw["cost_weighted_recall"],
         "mean_mctd": cw["mean_mctd"],
+        "cost_to_detect_ratio": cw["cost_to_detect_ratio"],
+        "avoided_cost_ratio": cw["avoided_cost_ratio"],
         "alert_cost_efficiency": cw["alert_cost_efficiency"],
     }
     return metrics, ev_res
@@ -318,7 +329,8 @@ def run_evaluation(df, events_df, scores_long,
         "model_name", "threshold", "total_alerts", "false_alarm_rate",
         "precision", "recall", "f1", "auprc",
         "event_recall", "mean_detection_delay",
-        "cost_weighted_recall", "mean_mctd", "alert_cost_efficiency",
+        "cost_weighted_recall", "mean_mctd", "cost_to_detect_ratio",
+        "avoided_cost_ratio", "alert_cost_efficiency",
     ]
     model_metrics = pd.DataFrame(metric_rows)[metrics_cols]
     event_results = pd.concat(ev_parts, axis=0, ignore_index=True)

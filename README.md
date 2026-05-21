@@ -47,27 +47,33 @@ The current report is based mainly on the full FOCUS strict benchmark:
 - FOCUS full sample: `5,488,359` rows, `44` source columns
 - Full strict service groups: `4`
 - Seeds: `0, 1, 2`
+- Balanced injection: `3` events per service x seed x anomaly type x intensity
+- Compared models: `5`
 - Main output directory: `outputs/results_full_strict/`
 - Main figure directory: `outputs/figures_full_strict/`
 - Inventory artifact: `outputs/focus_data_inventory.json`
 
 The full strict model ranking at the primary Year-1 false-alarm target of 1% is:
 
-| Model | F1 | Cost-Weighted Recall | Alert Cost Efficiency | Mean MCTD |
-|---|---:|---:|---:|---:|
-| Prophet | 0.5132 | 0.9553 | 101.33 | 15.08 |
-| IsolationForest | 0.4461 | 0.8822 | 157.63 | 26.31 |
-| LSTM_AE | 0.3172 | 0.9191 | 37.72 | 12.14 |
-| EWMA | 0.2226 | 0.5543 | 484.66 | 174.12 |
+| Model | F1 | Cost-Weighted Recall | Alert Cost Efficiency | Mean MCTD | Avoided Cost Ratio |
+|---|---:|---:|---:|---:|---:|
+| Prophet | 0.5798 | 0.9498 | 104.40 | 19.66 | 0.9063 |
+| IsolationForest | 0.4353 | 0.8765 | 170.83 | 44.50 | 0.8252 |
+| LSTM_AE | 0.3833 | 0.9076 | 43.49 | 19.47 | 0.8678 |
+| SeasonalNaiveMAD | 0.2242 | 0.5966 | 487.52 | 210.70 | 0.5114 |
+| EWMA | 0.1773 | 0.5154 | 511.36 | 245.75 | 0.4590 |
 
 Interpretation:
 
 - Prophet is strongest on F1 and dollar recall.
 - LSTM autoencoder has the lowest mean MCTD in the full strict run.
-- EWMA looks efficient per alert but misses too much dollar impact and detects
-  too late for FinOps loss reduction.
+- EWMA and SeasonalNaiveMAD can look efficient per alert, but both miss too
+  much dollar impact and detect too late for FinOps loss reduction.
 - Model choice changes depending on whether the operational objective is
   classification quality, dollars caught, cost-to-detect, or alert efficiency.
+- Prophet's advantage should be interpreted within this FOCUS-calibrated
+  benchmark because the generated baseline explicitly contains trend and weekly
+  seasonality.
 
 ## Data Strategy
 
@@ -76,8 +82,13 @@ Interpretation:
 This project uses the official FOCUS Sample Data repository:
 
 - FOCUS site: <https://focus.finops.org/>
+- FOCUS specification: <https://focus.finops.org/focus-specification/>
 - FOCUS Sample Data: <https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data>
 - FOCUS 1.0 sample folder: <https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/tree/main/FOCUS-1.0>
+
+The current experiments use the public FOCUS 1.0 sample data. The FOCUS
+specification has continued to evolve, so validating against newer FOCUS 1.3
+exports is future work rather than a claim made by this repository.
 
 Cached files used locally:
 
@@ -115,7 +126,7 @@ a regenerable artifact.
 
 `scripts/run_focus_benchmark.py` downloads or reuses a FOCUS CSV/CSV.GZ,
 aggregates it into daily service-level cost series, extracts calibration
-statistics, generates 730-day labeled benchmark series, and runs four detectors.
+statistics, generates 730-day labeled benchmark series, and runs five detectors.
 
 Calibration parameters extracted from real FOCUS daily series:
 
@@ -131,6 +142,8 @@ Anomalies are injected only in Year 2:
 - `gradual`
 
 Each anomaly has `low`, `mid`, or `high` intensity and event-level cost impact.
+The current main run uses `--n-events-per-combo 3` so anomaly type x intensity
+cells are balanced.
 
 ### 2. Raw FOCUS Sanity Check
 
@@ -147,11 +160,12 @@ FOCUS-calibrated path.
 
 ## Compared Models
 
-The benchmark compares four representative detection paradigms:
+The benchmark compares five representative detection paradigms:
 
 | Model | Paradigm | Score |
 |---|---|---|
 | EWMA | Statistical residual baseline | EWMA residual z-score |
+| SeasonalNaiveMAD | Practical robust seasonal baseline | Same-day-of-week median/MAD deviation |
 | IsolationForest | Feature-based unsupervised learning | Calendar/lag/rolling-feature anomaly score |
 | LSTM_AE | Sequence reconstruction | Reconstruction error |
 | Prophet | Forecast residual | Forecast residual z-score |
@@ -185,6 +199,7 @@ Primary metrics:
 - mean detection delay
 - cost-weighted recall
 - mean cost-to-detect (`mean_mctd`)
+- cost-to-detect ratio and avoided cost ratio
 - alert cost efficiency
 
 ## Repository Structure
@@ -193,7 +208,7 @@ Primary metrics:
 finops_benchmark/
   config.py              shared constants, paths, benchmark settings
   data.py                synthetic generation and anomaly injection
-  models.py              EWMA, IsolationForest, Prophet, LSTM-AE scoring
+  models.py              EWMA, SeasonalNaiveMAD, IsolationForest, Prophet, LSTM-AE scoring
   evaluation.py          thresholding and metrics
   experiment.py          seed loops, summaries, rank tables
   focus_loader.py        FOCUS download, parsing, daily aggregation
@@ -266,7 +281,8 @@ python scripts/run_focus_benchmark.py \
   --min-mean-cost 1.0 \
   --n-seeds 3 \
   --output-dir outputs/results_full_strict \
-  --figure-dir outputs/figures_full_strict
+  --figure-dir outputs/figures_full_strict \
+  --n-events-per-combo 3
 ```
 
 Main outputs:
@@ -274,9 +290,11 @@ Main outputs:
 ```text
 outputs/results_full_strict/focus_run_metadata.json
 outputs/results_full_strict/focus_calibration_stats.csv
+outputs/results_full_strict/focus_calibration_summary.csv
 outputs/results_full_strict/focus_service_summary.csv
 outputs/results_full_strict/focus_core_metrics_by_service.csv
 outputs/results_full_strict/focus_overall_model_ranking.csv
+outputs/results_full_strict/focus_overall_model_ranking_with_std.csv
 outputs/results_full_strict/focus_anomaly_type_results.csv
 outputs/results_full_strict/focus_anomaly_intensity_results.csv
 outputs/results_full_strict/focus_rank_reversal_by_service.csv
@@ -297,9 +315,10 @@ python scripts/run_focus_benchmark.py \
   --n-seeds 5
 ```
 
-This writes to `outputs/results/` and `outputs/figures/` by default. The report
-uses the summary CSV/metadata from this run, not every per-service raw event
-file.
+This command is optional and writes the 5-model relaxed robustness outputs to
+`outputs/results/` and `outputs/figures/`. The current primary result remains
+the stricter full-sample run under `outputs/results_full_strict/`, because the
+100k relaxed run uses 7 fallback-calibrated service groups.
 
 ### 4. Raw full FOCUS sanity check
 
@@ -312,7 +331,8 @@ python scripts/run_focus_unsupervised.py \
   --min-mean-cost 0.1 \
   --window 7 \
   --sigma 2.5 \
-  --output-prefix focus_unsupervised_full_relaxed
+  --output-prefix focus_unsupervised_full_relaxed \
+  --figure-dir outputs/figures_full_strict
 ```
 
 Outputs:
@@ -320,6 +340,8 @@ Outputs:
 ```text
 outputs/results/focus_unsupervised_full_relaxed_alerts.csv
 outputs/results/focus_unsupervised_full_relaxed_summary.csv
+outputs/figures_full_strict/focus_unsupervised_full_relaxed_case_AWS___Compute.png
+outputs/figures_full_strict/focus_unsupervised_full_relaxed_case_Microsoft___Networking.png
 ```
 
 ## Git And Outputs

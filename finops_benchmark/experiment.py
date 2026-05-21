@@ -33,7 +33,8 @@ except ImportError:
     from evaluation import run_evaluation
     from models import run_all_models
 
-def run_one_seed(seed, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False):
+def run_one_seed(seed, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False,
+                 n_events_per_combo=0):
     """
     한 seed에 대해 데이터 생성 -> 모델 score -> 다중 budget 평가까지 수행한다.
 
@@ -58,9 +59,10 @@ def run_one_seed(seed, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False):
     df_s, events_table_s = build_dataset(seed=seed,
                                          n_days=N_DAYS,
                                          year2_start=year2_start,
-                                         start_date=START_DATE)
+                                         start_date=START_DATE,
+                                         n_events_per_combo=n_events_per_combo)
 
-    # 2) 4개 모델 score 일괄 계산 (Part 2 함수 재사용)
+    # 2) 모델 score 일괄 계산 (Part 2 함수 재사용)
     scores_s, _aux = run_all_models(df_s, events_table_s,
                                     seed=seed, year2_start=year2_start,
                                     verbose=False)
@@ -240,7 +242,8 @@ def build_rank_comparison(all_metrics_df, year1_fpr_target=0.01):
     return out
 
 
-def run_one_seed_focus(seed, stats, year2_start=YEAR2_START, budgets=BUDGETS, verbose=False):
+def run_one_seed_focus(seed, stats, year2_start=YEAR2_START, budgets=BUDGETS,
+                       verbose=False, n_events_per_combo=0):
     """Like ``run_one_seed`` but uses a FOCUS-calibrated dataset.
 
     Parameters
@@ -255,6 +258,7 @@ def run_one_seed_focus(seed, stats, year2_start=YEAR2_START, budgets=BUDGETS, ve
     df_s, events_table_s = build_focus_calibrated_dataset(
         stats=stats, seed=seed, n_days=N_DAYS,
         year2_start=year2_start, start_date=START_DATE,
+        n_events_per_combo=n_events_per_combo,
     )
     scores_s, _aux = run_all_models(
         df_s, events_table_s, seed=seed, year2_start=year2_start, verbose=False,

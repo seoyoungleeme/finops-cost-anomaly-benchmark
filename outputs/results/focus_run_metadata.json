@@ -1,7 +1,7 @@
 {
-  "run_timestamp_utc": "2026-05-20T08:27:26.309496+00:00",
-  "git_commit": "24028163689721f90f974bc7fe5dd65cdf9cc3e8",
-  "runtime_seconds": 28939.9,
+  "run_timestamp_utc": "2026-05-21T03:46:38.009420+00:00",
+  "git_commit": "a45182db4e4533c4ae0d2a867160c3c0ed42d77e",
+  "runtime_seconds": 334.5,
   "library_versions": {
     "python": "3.12.4",
     "numpy": "1.26.4",
@@ -19,7 +19,10 @@
     "min_days": 14,
     "min_nonzero_days": 7,
     "min_mean_cost": 0.1,
-    "verbose": false
+    "output_dir": "outputs/results",
+    "figure_dir": "outputs/figures",
+    "verbose": false,
+    "n_events_per_combo": 3
   },
   "config": {
     "N_DAYS": 730,
@@ -49,13 +52,12 @@
       "ProviderName",
       "ServiceCategory"
     ],
-    "eval_far_target": 0.01
+    "eval_far_target": 0.01,
+    "n_events_per_combo": 3
   },
   "study_type": "focus_calibrated_synthetic",
   "real_data_claim": "Real FOCUS data is used only to calibrate synthetic baseline statistics; anomaly labels remain synthetic.",
   "data_inventory": {
-    "_added_post_hoc": true,
-    "_post_hoc_note": "Derived from .focus_cache/focus_sample_100000.csv.gz on 2026-05-21 by scripts/build_focus_inventory.py; the file is the same gzip used by this run.",
     "source_url": "https://raw.githubusercontent.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data/main/FOCUS-1.0/focus_sample_100000.csv.gz",
     "cache_path": ".focus_cache/focus_sample_100000.csv.gz",
     "bytes": 9173495,
@@ -90,8 +92,11 @@
   "interpretation_warnings": [
     "Observed FOCUS histories are short (max 30 days); this supports baseline calibration realism, not a long-horizon real-data benchmark.",
     "7 service group(s) fell back to global calibration stats; treat service-specific conclusions cautiously.",
-    "FOCUS benchmark results here are calibrated-synthetic: real FOCUS data sets the baseline statistics, but anomaly labels remain synthetic."
+    "FOCUS benchmark results here are calibrated-synthetic: real FOCUS data sets the baseline statistics, but anomaly labels remain synthetic.",
+    "5/12 service(s) have monthly_growth clipped at a bound (raw estimate outside [-0.02, 0.10]). The synthetic trend may not reflect the true FOCUS trend magnitude.",
+    "5/12 service(s) have noise_pct clipped at a bound (raw estimate outside [0.01, 0.15]). The synthetic baseline may be smoother than the real FOCUS series."
   ],
+  "injection_balance_warnings": [],
   "output_figures": [
     "focus_f1_bar.png",
     "focus_dollar_recall_bar.png",

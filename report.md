@@ -13,9 +13,10 @@
 - 실제 FOCUS full sample을 로드하여 5,488,359 rows의 비용 데이터를 확보했다.
 - FOCUS 원자료에는 anomaly ground truth label이 없으므로, F1, recall, detection delay, MCTD 같은 정량 성능 평가는 raw FOCUS 자체가 아니라 FOCUS-calibrated synthetic benchmark에서 수행했다.
 - raw FOCUS 데이터는 rolling z-score 기반 sanity check로 사용하여 실제 비용 시계열에서도 의심 날짜가 탐지되는지 확인했다.
-- full FOCUS strict benchmark 결과, Prophet이 F1과 cost-weighted recall에서 가장 우수했다.
-- EWMA는 alert cost efficiency가 높지만, dollar recall과 MCTD가 낮아 비용 손실을 조기에 잡는 목적에는 취약했다.
+- full FOCUS strict benchmark를 5개 모델(EWMA, SeasonalNaiveMAD, IsolationForest, LSTM_AE, Prophet)로 재실행한 결과, Prophet이 F1과 cost-weighted recall에서 가장 우수했다.
+- EWMA와 SeasonalNaiveMAD는 alert cost efficiency가 높게 보일 수 있지만, dollar recall과 MCTD/CTDR이 낮아 비용 손실을 조기에 잡는 목적에는 취약했다.
 - 평가 지표가 F1, dollar recall, MCTD, alert cost efficiency 중 무엇인지에 따라 모델 순위가 달라졌고, 이는 본 연구의 핵심 주장인 "FinOps에서는 표준 분류 지표만으로 모델을 선택하면 부족하다"를 뒷받침한다.
+- 최종 full strict run은 anomaly type × intensity 이벤트 수를 균형화하고, calibration clipping saturation과 normalized cost-to-detect 지표를 산출물에 기록했다.
 
 본 연구에서 가장 방어 가능한 표현은 다음과 같다.
 
@@ -132,6 +133,8 @@ FOCUS는 FinOps Open Cost and Usage Specification의 약자로, 기술 billing d
 - [FOCUS Sample Data GitHub repository](https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data)
 
 단, FOCUS는 billing data schema와 sample data를 제공하지만 anomaly label을 제공하지 않는다. 따라서 본 연구는 FOCUS를 "정답 label source"가 아니라 "realistic billing baseline source"로 사용한다.
+
+버전 주의. 본 실험은 `FOCUS-Sample-Data/FOCUS-1.0` sample을 사용했다. 2026년 5월 현재 FOCUS specification은 FOCUS 1.3까지 공개되어 있으며, 최신 specification은 contract commitments, split cost allocation, completeness/recency 같은 항목을 확장한다. 따라서 본 결과는 FOCUS 1.0 sample 기반 calibration 결과로 한정해야 하며, FOCUS 1.3 sample 또는 실제 조직의 FOCUS-exported billing data로 확장 검증하는 것은 후속 과제다. 출처: [FOCUS Specification](https://focus.finops.org/focus-specification/), [FinOps Foundation - Introducing FOCUS 1.3](https://www.finops.org/insights/introducing-focus-1-3/).
 
 ### 3.4 일반 anomaly detection benchmark와의 차이
 
@@ -327,6 +330,8 @@ FOCUS daily series에서 추출한 calibration parameters는 다음과 같다.
 
 또한 service-specific weekly factor는 global weekly factor와 50/50으로 blending했다. 이는 30일 내외의 짧은 FOCUS sample에서 특정 요일이 우연히 과도하게 반영되는 것을 줄이기 위한 보수적 처리이다.
 
+최종 full strict run에서는 raw 추정값과 clipped 값을 함께 저장했다. `outputs/results_full_strict/focus_calibration_stats.csv`에는 `monthly_growth_raw`, `monthly_growth_saturated`, `noise_pct_raw`, `noise_pct_saturated`가 포함되며, cross-service 요약은 `focus_calibration_summary.csv`에 저장된다. 최종 결과에서는 4/4 service group의 `monthly_growth`와 `noise_pct`가 모두 clipping bound에 걸렸다. 즉 calibration은 FOCUS sample의 짧고 sparse한 관측치를 그대로 외삽하지 않고, 보수적 bound로 눌러 synthetic baseline을 생성한다. 이 때문에 본 연구의 realism은 "FOCUS에서 관측된 비용 수준과 패턴을 반영하되, trend/noise magnitude는 보수적으로 제한한 realism"으로 해석해야 한다.
+
 ### 6.4 calibrated synthetic benchmark 생성
 
 `finops_benchmark/data.py`의 `build_focus_calibrated_dataset()`은 다음 순서로 데이터를 만든다.
@@ -349,17 +354,18 @@ FOCUS daily series에서 추출한 calibration parameters는 다음과 같다.
 | `contextual` | 전체 절대 비용은 크지 않지만 요일/맥락상 비정상적인 비용 |
 | `gradual` | 7-14일 동안 점진적으로 비용이 증가하는 이상 |
 
-각 anomaly는 `low`, `mid`, `high` intensity로 주입되며, event-level label과 cost impact가 저장된다.
+각 anomaly는 `low`, `mid`, `high` intensity로 주입되며, event-level label과 cost impact가 저장된다. 최종 full strict run은 `--n-events-per-combo 3`을 사용해 service × seed × anomaly type × intensity 조합마다 3개 이벤트를 주입했다. 따라서 primary setting에서는 각 type × intensity cell이 36 events(4 services × 3 seeds × 3 events)로 균형을 이룬다. 이는 이전 run에서 gradual-mid/high 이벤트 수가 부족했던 문제를 줄이기 위한 보수적 수정이다. metadata의 `injection_balance_warnings`가 비어 있으면, 최종 산출물 기준으로 큰 event imbalance가 없다는 뜻이다.
 
 ## 7. 모델과 평가 프로토콜
 
 ### 7.1 비교 모델
 
-본 연구는 네 가지 대표 탐지 패러다임을 비교했다.
+본 연구는 다섯 가지 대표 탐지 패러다임을 비교했다.
 
 | 모델 | 패러다임 | score 의미 |
 |---|---|---|
 | EWMA | 통계 기반 residual z-score | EWMA baseline 대비 이탈 정도 |
+| SeasonalNaiveMAD | 실무형 robust seasonal baseline | 같은 요일 과거 median 대비 robust deviation |
 | IsolationForest | tree 기반 비지도 학습 | calendar, lag, rolling feature 기반 이상도 |
 | LSTM_AE | reconstruction 기반 deep learning | 정상 패턴 재구성 오차 |
 | Prophet | forecasting residual 기반 | trend/seasonality forecast 대비 residual |
@@ -371,6 +377,10 @@ FOCUS daily series에서 추출한 calibration parameters는 다음과 같다.
 EWMA는 Exponentially Weighted Moving Average의 약자이며, 최근 관측값에 더 큰 가중치를 두고 과거 관측값의 영향은 지수적으로 감소시키는 방식이다. 통계적 공정관리에서는 EWMA control chart가 작은 shift나 점진적 변화를 감지하는 데 사용되어 왔다. NIST Engineering Statistics Handbook도 EWMA statistic이 최근 측정값을 포함한 과거 data의 exponentially weighted average에 기반한다고 설명한다. 출처: [NIST - EWMA Control Charts](https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc324.htm).
 
 본 연구에서 EWMA는 단순하고 해석 가능한 statistical baseline 역할을 한다. 비용 series의 local trend를 부드럽게 추정한 뒤, 실제 비용이 baseline에서 얼마나 벗어났는지를 residual z-score로 계산한다. 장점은 구현이 간단하고 계산 비용이 낮으며 운영자가 이해하기 쉽다는 점이다. 단점은 요일 context, service-specific pattern, complex seasonality를 명시적으로 모델링하지 못한다는 점이다. 따라서 spike에는 반응할 수 있지만 contextual anomaly나 gradual anomaly에는 취약할 수 있다.
+
+#### SeasonalNaiveMAD
+
+SeasonalNaiveMAD는 같은 요일의 과거 비용을 robust baseline으로 사용하는 실무형 baseline이다. 각 날짜의 비용을 이전 같은 요일 관측치들의 median과 비교하고, median absolute deviation(MAD)로 scale을 맞춘 robust z-score를 anomaly score로 사용한다. 이 방식은 복잡한 학습 없이도 weekly billing pattern을 반영할 수 있고, 운영자가 설명하기 쉽다. 다만 history가 짧거나 sparse하면 같은 요일 샘플 수가 부족해지고, 점진적 변화나 level shift에는 둔감할 수 있다. 본 연구에서는 provider-native black-box 도구 대신, 현업에서 구현 가능한 간단한 seasonal rule baseline으로 포함했다.
 
 #### IsolationForest
 
@@ -390,13 +400,14 @@ Prophet은 Taylor와 Letham이 제안한 forecasting framework로, trend, season
 
 본 연구에서 Prophet은 비용 시계열의 trend와 weekly seasonality를 forecast하고, 실제 비용과 예측 비용의 residual을 anomaly score로 사용한다. 장점은 클라우드 비용처럼 trend와 weekly pattern이 있는 series에 잘 맞을 수 있고, forecast residual이 비교적 해석 가능하다는 점이다. 단점은 갑작스러운 regime change, 매우 짧은 history, sparse service group에서는 forecast가 불안정할 수 있다는 점이다. 본 실험에서는 FOCUS-calibrated baseline의 trend/seasonality와 anomaly injection 구조가 Prophet의 강점과 잘 맞아 F1과 cost-weighted recall에서 높은 성능을 보였다.
 
-#### 네 모델을 함께 비교하는 이유
+#### 다섯 모델을 함께 비교하는 이유
 
-네 모델은 서로 다른 탐지 패러다임을 대표한다.
+다섯 모델은 서로 다른 탐지 패러다임을 대표한다.
 
 | 패러다임 | 대표 모델 | 비교 이유 |
 |---|---|---|
 | 단순 통계 baseline | EWMA | 운영 친화적이고 해석 가능하지만 복잡한 context에는 약할 수 있음 |
+| 실무형 seasonal robust baseline | SeasonalNaiveMAD | 요일별 median/MAD로 구현이 쉽고 설명 가능 |
 | feature-based unsupervised learning | IsolationForest | calendar/lag/rolling feature를 사용해 contextual pattern을 포착 가능 |
 | sequence reconstruction | LSTM_AE | 비선형 temporal dependency와 gradual change 탐지 가능성 |
 | forecasting residual | Prophet | trend/seasonality가 강한 비용 series에 적합 |
@@ -444,9 +455,11 @@ FinOps 비용 가중 지표:
 
 - cost-weighted recall: 전체 anomaly cost 중 탐지한 비용 비율
 - mean MCTD: mean cost-to-detect, 탐지 전까지 누적된 비용 손실
+- cost-to-detect ratio: 전체 anomaly cost 대비 탐지 전 손실 비용 비율
+- avoided cost ratio: `1 - cost-to-detect ratio`; anomaly cost 중 탐지로 회피한 비용 비율의 근사값
 - alert cost efficiency: alert 1개당 포착한 anomaly cost
 
-FinOps 관점에서는 F1 하나만으로 모델을 고르면 부족하다. 예를 들어 alert 수가 적어 precision이 높아도 큰 비용 anomaly를 늦게 잡으면 운영상 좋지 않다. 반대로 F1은 낮아도 큰 비용 이벤트를 빨리 잡는 모델이 실무적으로 더 유용할 수 있다.
+FinOps 관점에서는 F1 하나만으로 모델을 고르면 부족하다. 예를 들어 alert 수가 적어 precision이 높아도 큰 비용 anomaly를 늦게 잡으면 운영상 좋지 않다. 반대로 F1은 낮아도 큰 비용 이벤트를 빨리 잡는 모델이 실무적으로 더 유용할 수 있다. `mean_mctd`는 비용 단위라 service 규모의 영향을 받으므로, 최종 산출물에는 scale-normalized 지표인 `cost_to_detect_ratio`와 `avoided_cost_ratio`도 함께 저장했다.
 
 ## 8. 실행한 실험
 
@@ -463,7 +476,10 @@ python scripts/run_focus_benchmark.py `
   --min-days 14 `
   --min-nonzero-days 7 `
   --min-mean-cost 0.1 `
-  --n-seeds 5
+  --n-seeds 5 `
+  --output-dir outputs/results `
+  --figure-dir outputs/figures `
+  --n-events-per-combo 3
 ```
 
 metadata:
@@ -474,7 +490,9 @@ metadata:
 | service groups | 12 |
 | seeds | 0, 1, 2, 3, 4 |
 | budgets | 0.5%, 1.0%, 2.0% |
-| runtime | 28,939.9 sec |
+| compared models | 5 |
+| event balance | 3 events per service × seed × type × intensity |
+| runtime | 334.5 sec |
 | output dir | `outputs/results` |
 | figures | `outputs/figures` |
 
@@ -496,6 +514,7 @@ metadata:
 주의점:
 
 - 12개 group 중 7개 group은 관측일이 21일 미만이라 global fallback calibration을 사용했다.
+- 5개 service-specific calibrated group 중 5개 모두 `monthly_growth`와 `noise_pct`가 clipping bound에 도달했다. 나머지 7개 fallback group은 global calibration을 사용했다.
 - 따라서 100k relaxed 결과는 다양성 확인에는 유용하지만, service-specific conclusion은 조심해야 한다.
 
 ### 8.2 full FOCUS strict calibrated benchmark
@@ -513,7 +532,8 @@ python scripts/run_focus_benchmark.py `
   --min-mean-cost 1.0 `
   --n-seeds 3 `
   --output-dir outputs/results_full_strict `
-  --figure-dir outputs/figures_full_strict
+  --figure-dir outputs/figures_full_strict `
+  --n-events-per-combo 3
 ```
 
 metadata:
@@ -524,7 +544,9 @@ metadata:
 | service groups | 4 |
 | seeds | 0, 1, 2 |
 | budgets | 0.5%, 1.0%, 2.0% |
-| runtime | 151.8 sec |
+| compared models | 5 |
+| event balance | 3 events per service × seed × type × intensity |
+| runtime | 249.3 sec |
 | output dir | `outputs/results_full_strict` |
 | figures | `outputs/figures_full_strict` |
 
@@ -537,7 +559,7 @@ strict 기준으로 살아남은 service groups:
 | AWS / Other | 30 | 30 | 54.0427 | 0.10 | 0.15 | False |
 | Oracle / Compute | 30 | 15 | 24.6667 | 0.10 | 0.15 | False |
 
-4개 group 모두 `used_fallback=False`이며 (`focus_calibration_stats.csv`), 같은 사실이 `focus_run_metadata.json`의 `n_fallback_services: 0`에도 명시돼 있다. 이 실험은 fallback 없이 모든 group이 service-specific calibration을 사용했다는 점에서 100k relaxed 결과(`n_fallback_services: 7`)보다 보수적이고 방어 가능하다.
+4개 group 모두 `used_fallback=False`이며 (`focus_calibration_stats.csv`), 같은 사실이 `focus_run_metadata.json`의 `n_fallback_services: 0`에도 명시돼 있다. 이 실험은 fallback 없이 모든 group이 service-specific calibration을 사용했다는 점에서 100k relaxed 결과(`n_fallback_services: 7`)보다 보수적이고 방어 가능하다. 단, 최종 run에서는 4/4 group의 `monthly_growth`와 `noise_pct`가 clipping bound에 도달했으므로 trend/noise magnitude는 FOCUS raw estimate를 그대로 외삽한 것이 아니라 보수적으로 제한한 값이다.
 
 ### 8.3 raw full FOCUS sanity check
 
@@ -554,7 +576,8 @@ python scripts/run_focus_unsupervised.py `
   --min-mean-cost 0.1 `
   --window 7 `
   --sigma 2.5 `
-  --output-prefix focus_unsupervised_full_relaxed
+  --output-prefix focus_unsupervised_full_relaxed `
+  --figure-dir outputs/figures_full_strict
 ```
 
 결과 파일:
@@ -564,38 +587,44 @@ python scripts/run_focus_unsupervised.py `
 
 raw sanity check에서는 18개 service group이 살아남았다. 이 결과는 성능 평가가 아니라 실제 비용 데이터에서 detector가 의심 날짜를 찾아낼 수 있는지 확인하기 위한 보조 자료다.
 
+추가로 raw FOCUS case-study plot 2개를 생성했다.
+
+- `outputs/figures_full_strict/focus_unsupervised_full_relaxed_case_AWS___Compute.png`
+- `outputs/figures_full_strict/focus_unsupervised_full_relaxed_case_Microsoft___Networking.png`
+
 ## 9. 결과
 
 ### 9.1 full FOCUS strict benchmark 전체 모델 순위
 
 Primary setting: Year-1 FAR target = 1%. 값은 `mean ± std`이며, std는 service × seed (총 4 × 3 = 12 cell) pooled 표준편차이다. std 컬럼은 `outputs/results_full_strict/focus_overall_model_ranking_with_std.csv`에 함께 저장돼 있다.
 
-| model | F1 | F1 rank | cost-weighted recall | dollar recall rank | alert cost efficiency | ACE rank | mean MCTD | MCTD rank |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prophet | 0.5132 ± 0.0638 | 1 | 0.9553 ± 0.0682 | 1 | 101.33 ± 92.59 | 3 | 15.08 ± 18.79 | 2 |
-| IsolationForest | 0.4461 ± 0.0948 | 2 | 0.8822 ± 0.1479 | 3 | 157.63 ± 151.05 | 2 | 26.31 ± 20.94 | 3 |
-| LSTM_AE | 0.3172 ± 0.0727 | 3 | 0.9191 ± 0.1326 | 2 | 37.72 ± 33.05 | 4 | 12.14 ± 10.70 | 1 |
-| EWMA | 0.2226 ± 0.0633 | 4 | 0.5543 ± 0.1209 | 4 | 484.66 ± 525.65 | 1 | 174.12 ± 186.42 | 4 |
+| model | F1 | F1 rank | cost-weighted recall | dollar recall rank | alert cost efficiency | ACE rank | mean MCTD | MCTD rank | avoided cost ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Prophet | 0.5798 ± 0.0820 | 1 | 0.9498 ± 0.0762 | 1 | 104.40 ± 100.85 | 4 | 19.66 ± 22.64 | 2 | 0.9063 ± 0.1054 |
+| IsolationForest | 0.4353 ± 0.1232 | 2 | 0.8765 ± 0.1647 | 3 | 170.83 ± 176.03 | 3 | 44.50 ± 49.79 | 3 | 0.8252 ± 0.1730 |
+| LSTM_AE | 0.3833 ± 0.1149 | 3 | 0.9076 ± 0.1447 | 2 | 43.49 ± 39.18 | 5 | 19.47 ± 15.68 | 1 | 0.8678 ± 0.1703 |
+| SeasonalNaiveMAD | 0.2242 ± 0.0917 | 4 | 0.5966 ± 0.1660 | 4 | 487.52 ± 498.82 | 2 | 210.70 ± 233.59 | 4 | 0.5114 ± 0.1381 |
+| EWMA | 0.1773 ± 0.0354 | 5 | 0.5154 ± 0.0786 | 5 | 511.36 ± 555.28 | 1 | 245.75 ± 256.17 | 5 | 0.4590 ± 0.0740 |
 
 해석:
 
-- Prophet은 F1과 cost-weighted recall에서 1위다. F1 0.5132 ± 0.0638 vs IsolationForest 0.4461 ± 0.0948은 std 대비 차이가 약 1σ 수준이므로 추세는 일관되지만 통계적 유의성을 확정하기에는 seed 수(3)와 service 수(4)가 작다.
-- LSTM_AE는 mean MCTD가 가장 낮아, 탐지된 이벤트에서는 빠르게 비용 손실을 줄이는 경향이 있다.
-- EWMA는 alert cost efficiency가 1위지만, 이는 alert 수가 적기 때문일 수 있다. 실제로 cost-weighted recall은 0.5543으로 낮고 MCTD는 174.12로 가장 높다. ACE 표준편차(±525.65)가 mean(484.66)을 넘어설 정도로 service간 변동이 큰데, 이는 EWMA가 service별로 alert 수가 한 자릿수로 적기 때문에 분모가 작아 ratio가 불안정한 구조적 효과로 보인다.
-- IsolationForest는 F1 기준 2위, ACE 기준 2위로 중간 정도의 균형을 보인다.
+- Prophet은 F1과 cost-weighted recall에서 1위다. 다만 이 결과는 FOCUS-calibrated synthetic benchmark에서의 우위이며, Prophet의 trend/weekly seasonality 가정이 본 benchmark의 baseline 생성 구조와 잘 맞는다는 점을 함께 해석해야 한다.
+- LSTM_AE는 mean MCTD가 가장 낮고 avoided cost ratio도 2위다. 즉 전체 F1은 Prophet보다 낮지만, 탐지된 이벤트에서 비용 손실을 빠르게 줄이는 경향이 있다.
+- EWMA와 SeasonalNaiveMAD는 alert cost efficiency가 높지만, 이는 alert 수가 적은 데서 오는 ratio 효과일 수 있다. 두 모델 모두 cost-weighted recall과 avoided cost ratio가 낮아, 비용 손실 최소화 목적에는 위험하다.
+- IsolationForest는 F1 기준 2위이며, contextual anomaly와 high-intensity spike에서 안정적인 성능을 보인다.
 
 ### 9.2 full FOCUS strict service-level 결과
 
-| service | F1 mean | AUPRC mean | cost-weighted recall mean | mean MCTD |
-|---|---:|---:|---:|---:|
-| AWS / Compute | 0.3948 | 0.4770 | 0.8680 | 141.4704 |
-| AWS / Databases | 0.2858 | 0.4651 | 0.6975 | 8.8999 |
-| AWS / Other | 0.4219 | 0.5161 | 0.8804 | 49.9820 |
-| Oracle / Compute | 0.3966 | 0.4967 | 0.8650 | 27.2859 |
+| service | F1 mean | AUPRC mean | cost-weighted recall mean | mean MCTD | avoided cost ratio |
+|---|---:|---:|---:|---:|---:|
+| AWS / Compute | 0.3823 | 0.5538 | 0.8103 | 277.8097 | 0.7590 |
+| AWS / Databases | 0.2504 | 0.5317 | 0.6342 | 12.9523 | 0.5571 |
+| AWS / Other | 0.4079 | 0.5890 | 0.8003 | 96.7656 | 0.7607 |
+| Oracle / Compute | 0.3993 | 0.5707 | 0.8317 | 44.5358 | 0.7790 |
 
 해석:
 
-- AWS / Other에서 평균 F1과 cost-weighted recall이 가장 높다. 단, "Other"는 FOCUS `ServiceCategory`에서 다른 카테고리에 속하지 않는 잔여 service들을 묶은 heterogeneous bucket이므로, 이 결과는 단일 service 특성이라기보다 다양한 service pattern이 섞여 평균화된 결과로 해석해야 한다. service-level 일반화 주장의 근거로 직접 쓰지 않는 편이 안전하다.
+- AWS / Other와 Oracle / Compute에서 평균 F1이 높다. 단, "Other"는 FOCUS `ServiceCategory`에서 다른 카테고리에 속하지 않는 잔여 service들을 묶은 heterogeneous bucket이므로, 이 결과는 단일 service 특성이라기보다 다양한 service pattern이 섞여 평균화된 결과로 해석해야 한다.
 - AWS / Compute는 base level이 가장 높고 mean MCTD도 높아, 비용 규모가 큰 workload에서 늦은 탐지가 더 큰 손실로 이어질 수 있음을 보여준다.
 - AWS / Databases는 전체 평균 F1과 dollar recall이 가장 낮다. 해당 service pattern에서는 anomaly와 normal variation의 구분이 더 어려웠을 가능성이 있다.
 
@@ -603,53 +632,57 @@ Primary setting: Year-1 FAR target = 1%. 값은 `mean ± std`이며, std는 serv
 
 Primary setting: Year-1 FAR target = 1%
 
-| model | anomaly type | n events | detection rate | mean detection delay | mean MCTD | dollar recall |
-|---|---|---:|---:|---:|---:|---:|
-| EWMA | spike | 136 | 0.3162 | 0.07 | 130.2994 | 0.6603 |
-| IsolationForest | spike | 136 | 0.6985 | 0.09 | 20.5876 | 0.9559 |
-| LSTM_AE | spike | 136 | 0.7941 | 0.05 | 7.1129 | 0.9839 |
-| Prophet | spike | 136 | 0.8015 | 0.07 | 12.3014 | 0.9781 |
-| EWMA | contextual | 140 | 0.4357 | 0.26 | 153.2618 | 0.5530 |
-| IsolationForest | contextual | 140 | 0.9000 | 0.06 | 3.3680 | 0.9973 |
-| LSTM_AE | contextual | 140 | 0.9000 | 0.07 | 6.2472 | 0.9934 |
-| Prophet | contextual | 140 | 0.9429 | 0.04 | 3.3132 | 0.9988 |
-| EWMA | gradual | 72 | 0.2361 | 7.41 | 292.5726 | 0.3010 |
-| IsolationForest | gradual | 72 | 0.6528 | 3.32 | 81.0111 | 0.9198 |
-| LSTM_AE | gradual | 72 | 0.8194 | 1.97 | 32.3632 | 0.9873 |
-| Prophet | gradual | 72 | 0.8611 | 3.40 | 42.4983 | 0.9919 |
+| model | anomaly type | n events | detection rate | mean detection delay | mean MCTD | avoided cost ratio | dollar recall |
+|---|---|---:|---:|---:|---:|---:|---:|
+| EWMA | spike | 108 | 0.4259 | 0.13 | 112.8210 | 0.7260 | 0.7607 |
+| IsolationForest | spike | 108 | 0.7130 | 0.03 | 27.4138 | 0.9334 | 0.9483 |
+| LSTM_AE | spike | 108 | 0.8333 | 0.02 | 4.4563 | 0.9892 | 0.9902 |
+| Prophet | spike | 108 | 0.7870 | 0.01 | 17.0526 | 0.9586 | 0.9634 |
+| SeasonalNaiveMAD | spike | 108 | 0.4444 | 0.04 | 77.1690 | 0.8126 | 0.8220 |
+| EWMA | contextual | 108 | 0.4074 | 0.20 | 162.8730 | 0.4863 | 0.5177 |
+| IsolationForest | contextual | 108 | 0.8704 | 0.00 | 4.3816 | 0.9862 | 0.9862 |
+| LSTM_AE | contextual | 108 | 0.8704 | 0.03 | 1.7480 | 0.9945 | 0.9957 |
+| Prophet | contextual | 108 | 0.9259 | 0.01 | 0.6649 | 0.9979 | 0.9980 |
+| SeasonalNaiveMAD | contextual | 108 | 0.3889 | 0.00 | 112.0162 | 0.6467 | 0.6467 |
+| EWMA | gradual | 108 | 0.2037 | 5.36 | 461.5614 | 0.2440 | 0.3375 |
+| IsolationForest | gradual | 108 | 0.7315 | 3.19 | 101.6991 | 0.8334 | 0.9335 |
+| LSTM_AE | gradual | 108 | 0.8056 | 1.80 | 52.2145 | 0.9145 | 0.9580 |
+| Prophet | gradual | 108 | 0.8704 | 2.50 | 41.2631 | 0.9324 | 0.9905 |
+| SeasonalNaiveMAD | gradual | 108 | 0.3241 | 6.11 | 442.9035 | 0.2745 | 0.4494 |
 
 **intensity별 event count breakdown** (`focus_anomaly_intensity_results.csv` 기준):
 
 | anomaly type | low | mid | high | total |
 |---|---:|---:|---:|---:|
-| spike | 48 | 36 | 52 | 136 |
-| contextual | 40 | 52 | 48 | 140 |
-| gradual | 56 | 12 | 4 | 72 |
+| spike | 36 | 36 | 36 | 108 |
+| contextual | 36 | 36 | 36 | 108 |
+| gradual | 36 | 36 | 36 | 108 |
 
-gradual anomaly는 mid 12건, high 4건으로 표본이 매우 적기 때문에 gradual 통합 평균(72 events) 결과는 사실상 gradual-low (56건) 결론에 가깝다. gradual-mid/gradual-high 단독 결론은 보류한다.
+최종 full strict run에서는 `--n-events-per-combo 3`을 적용해 intensity별 event count imbalance를 제거했다. 따라서 이전 run에서 gradual-high가 4건뿐이던 문제는 해결되었고, type × intensity 단위 비교의 표본 균형성이 개선됐다.
 
 해석:
 
 - Prophet은 세 anomaly type 모두에서 높은 detection rate와 dollar recall을 보인다.
-- LSTM_AE는 gradual anomaly에서 낮은 MCTD와 높은 dollar recall을 보인다. 점진적 패턴 변화에 대한 reconstruction error 기반 접근이 비용 손실을 줄이는 데 유리할 수 있다. 단 위 표본 imbalance를 고려하면 이 결론은 주로 gradual-low 구간에서 성립함을 명시한다.
-- EWMA는 gradual anomaly에 특히 취약하다. detection rate가 0.2361이고 dollar recall도 0.3010으로 낮다.
-- Contextual anomaly에서는 Prophet, IsolationForest, LSTM_AE가 모두 높은 detection rate를 보였지만, EWMA는 요일/맥락 정보를 충분히 활용하지 못해 낮은 성능을 보였다.
+- LSTM_AE는 spike에서 가장 낮은 MCTD를 보이고, gradual에서도 Prophet 다음으로 높은 avoided cost ratio를 보인다.
+- EWMA와 SeasonalNaiveMAD는 gradual anomaly에 특히 취약하다. 두 모델 모두 detection rate와 avoided cost ratio가 낮아 점진적 비용 손실을 늦게 잡는다.
+- Contextual anomaly에서는 Prophet, IsolationForest, LSTM_AE가 모두 높은 detection rate를 보였지만, EWMA와 SeasonalNaiveMAD는 상대적으로 낮았다.
 
 ### 9.4 100k relaxed benchmark 결과
 
-Primary setting: Year-1 FAR target = 1%. 값은 `mean ± std`이며, std는 service × seed (총 12 × 5 = 60 cell) pooled 표준편차이다. std 컬럼은 `outputs/results/focus_overall_model_ranking_with_std.csv`에 함께 저장돼 있다.
+이 결과는 현재 5-model configuration과 `--n-events-per-combo 3`으로 재실행한 보조 robustness run이다. Primary setting은 Year-1 FAR target = 1%이며, 값은 `mean ± std`이다. std는 service × seed (총 12 × 5 = 60 cell) pooled 표준편차이다.
 
-| model | F1 | F1 rank | cost-weighted recall | dollar recall rank | alert cost efficiency | ACE rank | mean MCTD | MCTD rank |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prophet | 0.5444 ± 0.1054 | 1 | 0.9283 ± 0.0951 | 1 | 4.73 ± 11.34 | 3 | 1.01 ± 2.36 | 1 |
-| IsolationForest | 0.4228 ± 0.1026 | 2 | 0.8523 ± 0.1511 | 3 | 5.91 ± 13.04 | 2 | 1.99 ± 4.90 | 3 |
-| LSTM_AE | 0.2917 ± 0.0826 | 3 | 0.8532 ± 0.1327 | 2 | 1.49 ± 3.30 | 4 | 1.12 ± 2.18 | 2 |
-| EWMA | 0.2077 ± 0.0474 | 4 | 0.5503 ± 0.0742 | 4 | 16.22 ± 40.21 | 1 | 6.42 ± 16.35 | 4 |
+| model | F1 | F1 rank | cost-weighted recall | dollar recall rank | alert cost efficiency | ACE rank | mean MCTD | MCTD rank | avoided cost ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Prophet | 0.6000 ± 0.1209 | 1 | 0.9417 ± 0.0864 | 1 | 4.68 ± 11.35 | 4 | 1.16 ± 2.75 | 1 | 0.8709 ± 0.1177 |
+| IsolationForest | 0.4266 ± 0.1178 | 2 | 0.8535 ± 0.1390 | 3 | 6.13 ± 13.58 | 3 | 1.89 ± 4.33 | 3 | 0.7866 ± 0.1465 |
+| LSTM_AE | 0.3360 ± 0.0995 | 3 | 0.8621 ± 0.1695 | 2 | 1.71 ± 3.82 | 5 | 1.24 ± 2.55 | 2 | 0.8056 ± 0.1736 |
+| SeasonalNaiveMAD | 0.2560 ± 0.0887 | 4 | 0.6161 ± 0.1841 | 4 | 14.85 ± 36.87 | 2 | 7.58 ± 19.67 | 4 | 0.5268 ± 0.1396 |
+| EWMA | 0.1860 ± 0.0310 | 5 | 0.5267 ± 0.0731 | 5 | 19.16 ± 49.14 | 1 | 8.84 ± 21.83 | 5 | 0.4505 ± 0.0599 |
 
 이 결과는 full strict benchmark와 같은 방향을 보인다.
 
 - Prophet은 F1과 dollar recall에서 1위다.
-- EWMA는 ACE는 높지만 F1, dollar recall, MCTD가 낮다.
+- EWMA와 SeasonalNaiveMAD는 ACE는 높지만 F1, dollar recall, MCTD, avoided cost ratio가 낮다.
 - IsolationForest와 LSTM_AE는 중간 순위에서 metric별 순위가 달라진다.
 
 즉, sample size와 filtering 기준을 바꿔도 핵심 결론은 유지된다.
@@ -691,15 +724,15 @@ raw full FOCUS relaxed sanity check에서는 18개 service group이 살아남았
 
 ### RQ1. 탐지 패러다임별 anomaly type 성능 차이가 있는가
 
-있다. full strict benchmark에서 Prophet은 spike, contextual, gradual 모두에서 높은 detection rate와 dollar recall을 보였다. LSTM_AE는 gradual anomaly에서 MCTD가 낮아 비용 손실을 빠르게 줄이는 강점이 있었다. EWMA는 gradual과 contextual anomaly에서 약했다. 이는 단순 residual threshold 방식이 요일 맥락이나 점진적 변화에 취약할 수 있음을 보여준다.
+있다. full strict benchmark에서 Prophet은 contextual과 gradual에서 가장 높은 detection rate와 dollar recall을 보였고, LSTM_AE는 spike에서 가장 낮은 MCTD를 보였다. IsolationForest는 contextual anomaly에서 안정적이었다. EWMA와 SeasonalNaiveMAD는 gradual anomaly에서 특히 약했다. 이는 단순 residual 또는 robust seasonal baseline만으로는 점진적 비용 상승과 복합 맥락을 충분히 포착하기 어렵다는 점을 보여준다.
 
 ### RQ2. 표준 지표와 비용 가중 지표의 모델 순위가 다른가
 
-다르다. full strict benchmark에서 F1과 dollar recall 기준 1위는 Prophet이지만, alert cost efficiency 기준 1위는 EWMA다. 그러나 EWMA는 dollar recall이 0.5543이고 MCTD가 174.12로 매우 나쁘다. 즉 alert efficiency만 보면 EWMA가 좋아 보이지만, 실제 비용 손실을 줄이는 관점에서는 부적절할 수 있다. 이는 FinOps 비용 anomaly detection에서 단일 분류 지표만으로 모델을 선택하면 운영상 잘못된 결론을 낼 수 있음을 보여준다.
+다르다. full strict benchmark에서 F1과 dollar recall 기준 1위는 Prophet이지만, alert cost efficiency 기준 1위는 EWMA다. 그러나 EWMA는 dollar recall이 0.5154, avoided cost ratio가 0.4590으로 낮고 mean MCTD도 245.75로 가장 나쁘다. 즉 alert efficiency만 보면 EWMA가 좋아 보이지만, 실제 비용 손실을 줄이는 관점에서는 부적절할 수 있다. 이는 FinOps 비용 anomaly detection에서 단일 분류 지표나 단일 efficiency 지표만으로 모델을 선택하면 운영상 잘못된 결론을 낼 수 있음을 보여준다.
 
 ### RQ3. 탐지 메커니즘과 anomaly 유형의 mismatch가 있는가
 
-있다. EWMA는 급격한 spike에는 어느 정도 반응하지만, contextual anomaly와 gradual anomaly에서는 취약하다. IsolationForest는 calendar, lag, rolling feature를 사용하기 때문에 contextual anomaly에서 강한 편이다. Prophet은 trend와 seasonality를 모델링하므로 baseline 대비 residual이 명확한 경우에 강하다. LSTM_AE는 정상 패턴 reconstruction을 기준으로 하므로 gradual 변화에서 비용 손실을 빠르게 줄이는 장점이 나타났다.
+있다. EWMA는 급격한 spike에는 어느 정도 반응하지만, contextual anomaly와 gradual anomaly에서는 취약하다. SeasonalNaiveMAD는 같은 요일 baseline을 쓰기 때문에 high-intensity spike에는 반응하지만, low-intensity contextual/gradual anomaly에는 약했다. IsolationForest는 calendar와 lag feature를 사용하기 때문에 contextual anomaly에서 강한 편이다. Prophet은 trend와 seasonality를 모델링하므로 baseline 대비 residual이 명확한 경우에 강하다. LSTM_AE는 정상 패턴 reconstruction을 기준으로 하므로 spike와 gradual 변화에서 비용 손실을 빠르게 줄이는 장점이 나타났다.
 
 ## 11. 발표용 핵심 주장
 
@@ -710,8 +743,8 @@ raw full FOCUS relaxed sanity check에서는 18개 service group이 살아남았
 3. 본 연구는 FOCUS public sample에서 실제 비용 통계량을 추출해 synthetic benchmark를 보정했다.
 4. 이 방식은 실제 데이터 realism과 label availability를 동시에 확보한다.
 5. 실험 결과, F1 기준 모델 순위와 비용 가중 지표 기준 모델 순위가 달라졌다.
-6. Prophet은 F1과 dollar recall에서 강했지만, LSTM_AE는 MCTD에서 강했고, EWMA는 alert cost efficiency만 높았다.
-7. 따라서 FinOps 모델 선택에는 F1뿐 아니라 dollar recall, MCTD, alert efficiency를 함께 봐야 한다.
+6. Prophet은 F1과 dollar recall에서 강했지만, LSTM_AE는 MCTD에서 강했고, EWMA와 SeasonalNaiveMAD는 alert cost efficiency만 높게 보일 수 있었다.
+7. 따라서 FinOps 모델 선택에는 F1뿐 아니라 dollar recall, MCTD, avoided cost ratio, alert efficiency를 함께 봐야 한다.
 
 ## 12. 발표용 주의 문장
 
@@ -739,7 +772,13 @@ raw full FOCUS relaxed sanity check에서는 18개 service group이 살아남았
 
 답변:
 
-> 단일 답은 평가 목적에 따라 다릅니다. F1과 dollar recall 기준으로는 Prophet이 가장 강했습니다. MCTD 기준으로는 LSTM_AE가 좋은 모습을 보였습니다. EWMA는 alert cost efficiency는 높지만 놓치는 비용과 탐지 지연이 커서 FinOps 운영 목적에는 위험할 수 있습니다. 이 차이가 본 연구의 핵심입니다.
+> 단일 답은 평가 목적에 따라 다릅니다. F1과 dollar recall 기준으로는 Prophet이 가장 강했습니다. MCTD 기준으로는 LSTM_AE가 좋은 모습을 보였습니다. EWMA와 SeasonalNaiveMAD는 alert cost efficiency는 높게 보일 수 있지만 놓치는 비용과 탐지 지연이 커서 FinOps 운영 목적에는 위험할 수 있습니다. 이 차이가 본 연구의 핵심입니다.
+
+질문: "왜 Prophet 결과를 일반화하면 안 되나?"
+
+답변:
+
+> 본 benchmark의 baseline은 trend, weekly seasonality, monthly batch effect를 포함하도록 생성됩니다. Prophet도 trend와 seasonality를 명시적으로 모델링하므로 데이터 생성 구조와 모델 가정이 잘 맞습니다. 따라서 본 결과는 "FOCUS 1.0 sample로 보정한 trend/weekly benchmark에서 Prophet이 강하다"는 결론이지, 모든 실제 cloud billing 환경에서 Prophet이 항상 우월하다는 결론은 아닙니다.
 
 ## 13. 생성된 산출물
 
@@ -756,7 +795,8 @@ outputs/results_full_strict/
 | 파일 | 설명 |
 |---|---|
 | `focus_run_metadata.json` | 실행 설정, 데이터 URL, seed, runtime, warning |
-| `focus_calibration_stats.csv` | service별 FOCUS calibration parameter |
+| `focus_calibration_stats.csv` | service별 FOCUS calibration parameter, raw/clipped 값, clipping saturation 여부 |
+| `focus_calibration_summary.csv` | calibration parameter와 clipping saturation의 cross-service 요약 |
 | `focus_service_summary.csv` | service별 평균 성능 |
 | `focus_core_metrics_by_service.csv` | service x model x budget별 mean/std |
 | `focus_overall_model_ranking.csv` | 전체 모델 ranking (mean only) |
@@ -787,6 +827,8 @@ outputs/figures_full_strict/
 - `focus_mctd_by_type.png`
 - `focus_radar.png`
 - `focus_rank_slope.png`
+- `focus_unsupervised_full_relaxed_case_AWS___Compute.png`
+- `focus_unsupervised_full_relaxed_case_Microsoft___Networking.png`
 
 ### 13.2 100k relaxed benchmark
 
@@ -797,6 +839,8 @@ outputs/results/
 ```
 
 해당 디렉터리의 `focus_run_metadata.json`은 100k sample relaxed benchmark 실행 정보를 담고 있다.
+
+이 100k relaxed benchmark는 현재 5-model 설정으로 재실행했으며, `n_fallback_services: 7` 때문에 service-specific conclusion은 조심해야 한다. 최종 primary result는 여전히 더 보수적인 `outputs/results_full_strict/` full strict run이다.
 
 ### 13.3 raw FOCUS sanity check
 
@@ -831,10 +875,12 @@ outputs/focus_data_inventory.json
 3. 관측 기간이 30일 내외로 짧아 장기 trend, quarterly seasonality, annual seasonality는 검증할 수 없다. 또한 FOCUS sample의 청구일 자체가 sparse (195일 캘린더 구간에 32 unique billing days) 하므로 weekly_factor 추정에는 잔여 노이즈가 남는다.
 4. 일부 provider 또는 service는 row 수가 적어 filter를 통과하지 못했다. full strict benchmark는 4 service groups × 3 seeds = 12 cell에서 집계되므로 cross-service 일반화 주장은 thin sample 기반임을 명시한다.
 5. calibration parameter는 짧은 관측 기간에서 추정되므로 clipping과 smoothing을 적용했다.
-6. anomaly injection은 통제 가능하지만, 실제 misconfiguration, traffic burst, discount correction 등 모든 현실 이벤트를 완벽히 반영하지는 않는다. spike/contextual/gradual 각 intensity multiplier도 config 상수이지 FOCUS 비용 분포에서 추정한 값이 아니므로 magnitude의 외부 정당성은 약하다.
-7. Prophet, IsolationForest, LSTM_AE, EWMA의 hyperparameter는 대표적 baseline으로 설정했으며, 각 모델의 최적 tuning 연구는 별도 과제다.
-8. **모델-데이터 생성 구조 일치로 인한 내재 편향**. FOCUS-calibrated baseline은 *linear trend + multiplicative weekly factor + monthly batch effect + Gaussian noise* 구조로 생성된다 (`data.py:81-102`). 이는 Prophet의 additive trend + weekly seasonality + holiday/event 모델 가정과 거의 isomorphic하다. 따라서 본 실험에서 Prophet의 F1·dollar recall 우위는 모델 자체의 강점과 동시에 데이터 생성 과정이 Prophet의 가정과 잘 맞는 구조적 효과를 함께 반영한다. 따라서 본 보고서의 정확한 주장은 "linear trend와 weekly seasonality가 명확한 FOCUS-calibrated synthetic benchmark에서 Prophet이 강하다" 이며, 임의의 실제 cloud billing 시계열에서 Prophet이 보편적으로 우월하다고 일반화할 수는 없다.
-9. raw real-time / streaming 환경에서의 sequential detection은 본 실험에 포함되지 않았다. 모든 평가는 Year 2 전체 구간에 대한 batch scoring이다.
+6. 최종 full strict run에서는 4/4 service group의 `monthly_growth`와 `noise_pct`가 clipping bound에 도달했다. 이는 raw FOCUS sample의 짧은 관측치에서 추정된 trend/noise가 매우 불안정하다는 신호이며, synthetic baseline이 실제 raw 변동성을 완전히 재현한다는 뜻이 아니다.
+7. 본 실험은 FOCUS 1.0 sample data에 기반한다. FOCUS specification은 이후 1.3까지 확장되었으므로, 최신 schema/sample 또는 실제 조직의 FOCUS-exported billing data로 검증하는 후속 연구가 필요하다.
+8. anomaly injection은 type × intensity event count를 균형화했지만, 실제 misconfiguration, traffic burst, discount correction 등 모든 현실 이벤트를 완벽히 반영하지는 않는다. spike/contextual/gradual 각 intensity multiplier도 config 상수이지 FOCUS 비용 분포에서 추정한 값이 아니므로 magnitude의 외부 정당성은 약하다.
+9. Prophet, IsolationForest, LSTM_AE, EWMA, SeasonalNaiveMAD의 hyperparameter는 대표적 baseline으로 설정했으며, 각 모델의 최적 tuning 연구는 별도 과제다.
+10. **모델-데이터 생성 구조 일치로 인한 내재 편향**. FOCUS-calibrated baseline은 *linear trend + multiplicative weekly factor + monthly batch effect + Gaussian noise* 구조로 생성된다 (`data.py`). 이는 Prophet의 additive trend + weekly seasonality + holiday/event 모델 가정과 거의 isomorphic하다. 따라서 본 실험에서 Prophet의 F1·dollar recall 우위는 모델 자체의 강점과 동시에 데이터 생성 과정이 Prophet의 가정과 잘 맞는 구조적 효과를 함께 반영한다. 따라서 본 보고서의 정확한 주장은 "linear trend와 weekly seasonality가 명확한 FOCUS-calibrated synthetic benchmark에서 Prophet이 강하다" 이며, 임의의 실제 cloud billing 시계열에서 Prophet이 보편적으로 우월하다고 일반화할 수는 없다.
+11. raw real-time / streaming 환경에서의 sequential detection은 본 실험에 포함되지 않았다. 모든 평가는 Year 2 전체 구간에 대한 batch scoring이다.
 
 이 한계에도 불구하고, 본 연구는 순수 합성 실험보다 실제 FinOps billing data와 더 강하게 연결되어 있다. 동시에 없는 label을 있다고 가정하지 않기 때문에 연구 정당성과 정직성을 함께 확보한다.
 
@@ -856,8 +902,8 @@ Not claimed:
   Raw FOCUS labeled anomaly benchmark
 ```
 
-이 전략은 실제 데이터 활용과 정량 평가 가능성 사이에서 가장 방어 가능한 선택이다. 실제 FOCUS full sample의 비용 패턴으로 benchmark baseline을 보정했기 때문에 순수 합성 데이터보다 현실성이 높고, anomaly label은 통제된 injection으로 확보했기 때문에 F1, recall, detection delay, MCTD, dollar recall 같은 지표를 정당하게 계산할 수 있다.
+이 전략은 실제 데이터 활용과 정량 평가 가능성 사이에서 가장 방어 가능한 선택이다. 실제 FOCUS full sample의 비용 패턴으로 benchmark baseline을 보정했기 때문에 순수 합성 데이터보다 현실성이 높고, anomaly label은 통제된 injection으로 확보했기 때문에 F1, recall, detection delay, MCTD, dollar recall, avoided cost ratio 같은 지표를 정당하게 계산할 수 있다.
 
-결과적으로 Prophet은 F1과 cost-weighted recall에서 가장 강한 모델로 나타났고, LSTM_AE는 MCTD 측면에서 의미 있는 강점을 보였으며, EWMA는 alert cost efficiency만으로는 좋아 보일 수 있지만 실제 비용 손실을 줄이는 목적에서는 취약했다. 따라서 FinOps 비용 이상 탐지 모델을 선택할 때는 표준 분류 지표와 비용 가중 운영 지표를 함께 고려해야 한다.
+결과적으로 최종 full strict run에서 Prophet은 F1과 cost-weighted recall에서 가장 강한 모델로 나타났고, LSTM_AE는 MCTD 측면에서 의미 있는 강점을 보였다. EWMA와 SeasonalNaiveMAD는 alert cost efficiency만으로는 좋아 보일 수 있지만, cost-weighted recall과 avoided cost ratio가 낮아 실제 비용 손실을 줄이는 목적에서는 취약했다. 따라서 FinOps 비용 이상 탐지 모델을 선택할 때는 표준 분류 지표와 비용 가중 운영 지표를 함께 고려해야 한다.
 
-다만 Prophet의 우위에는 데이터 생성 구조와 모델 가정의 isomorphism이 일부 기여한다(Section 14, 한계 8). 따라서 본 결론은 "FOCUS-calibrated synthetic benchmark에서의 비교 결과"로 한정해 해석해야 하며, 실제 다양한 cloud billing 환경에서 동일한 ranking이 재현된다고 단정할 수는 없다.
+다만 Prophet의 우위에는 데이터 생성 구조와 모델 가정의 isomorphism이 일부 기여한다(Section 14, 한계 10). 따라서 본 결론은 "FOCUS 1.0 sample로 보정한 FOCUS-calibrated synthetic benchmark에서의 비교 결과"로 한정해 해석해야 하며, 실제 다양한 cloud billing 환경에서 동일한 ranking이 재현된다고 단정할 수는 없다.

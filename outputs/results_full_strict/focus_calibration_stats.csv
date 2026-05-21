@@ -1,5 +1,5 @@
-service,days_observed,nonzero_days,base_level,monthly_growth,noise_pct,weekly_factor,used_fallback,fallback_reason
-AWS / Compute,30,19,156.4667,0.1,0.15,"[0.7391, 1.6629, 1.2504, 0.5443, 0.5497, 1.0086, 1.2451]",False,
-AWS / Databases,30,21,18.5,-0.02,0.15,"[0.9945, 1.2223, 0.7782, 0.9418, 0.733, 0.6864, 1.6437]",False,
-AWS / Other,30,30,54.0427,0.1,0.15,"[0.9468, 1.0595, 0.8488, 0.8407, 0.9461, 1.1174, 1.2409]",False,
-Oracle / Compute,30,15,24.6667,0.1,0.15,"[0.9374, 1.0256, 0.553, 0.6789, 0.896, 1.6724, 1.2368]",False,
+service,days_observed,nonzero_days,base_level,monthly_growth_raw,monthly_growth,monthly_growth_saturated,noise_pct_raw,noise_pct,noise_pct_saturated,weekly_factor,used_fallback,fallback_reason
+AWS / Compute,30,19,156.4667,0.809,0.1,True,1.4558,0.15,True,"[0.7391, 1.6629, 1.2504, 0.5443, 0.5497, 1.0086, 1.2451]",False,
+AWS / Databases,30,21,18.5,-1.2176,-0.02,True,0.8904,0.15,True,"[0.9945, 1.2223, 0.7782, 0.9418, 0.733, 0.6864, 1.6437]",False,
+AWS / Other,30,30,54.0427,0.3978,0.1,True,0.3107,0.15,True,"[0.9468, 1.0595, 0.8488, 0.8407, 0.9461, 1.1174, 1.2409]",False,
+Oracle / Compute,30,15,24.6667,1.25,0.1,True,1.3683,0.15,True,"[0.9374, 1.0256, 0.553, 0.6789, 0.896, 1.6724, 1.2368]",False,

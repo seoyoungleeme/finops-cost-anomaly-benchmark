@@ -23,6 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,6 +48,49 @@ def rolling_zscore(series: pd.Series, window: int = 7, sigma: float = 2.5):
     rs = baseline.rolling(window, min_periods=3).std().clip(lower=1e-9)
     z = (series - rm) / rs
     return z, z.abs() > sigma
+
+
+def _safe_label(label: str) -> str:
+    return label.replace("/", "_").replace(" ", "_").replace(",", "_")
+
+
+def _plot_case_study(
+    service: str,
+    series: pd.Series,
+    z_scores: pd.Series,
+    alerts: pd.Series,
+    sigma: float,
+    save_path: Path,
+) -> None:
+    """Save a raw FOCUS cost plot with rolling-z suspicious dates highlighted."""
+    fig, (ax_cost, ax_z) = plt.subplots(
+        2, 1, figsize=(11, 5.8), sharex=True,
+        gridspec_kw={"height_ratios": [2.3, 1.0]},
+    )
+
+    ax_cost.plot(series.index, series.values, marker="o", lw=1.4, color="#2f6f9f")
+    if alerts.any():
+        flagged = series[alerts]
+        ax_cost.scatter(
+            flagged.index, flagged.values,
+            s=48, color="#d62728", zorder=4, label="flagged date",
+        )
+        ax_cost.legend(loc="best", fontsize=9)
+    ax_cost.set_title(f"Raw FOCUS Cost Sanity Check - {service}")
+    ax_cost.set_ylabel("Daily cost")
+    ax_cost.grid(alpha=0.3)
+
+    ax_z.plot(z_scores.index, z_scores.values, marker="o", lw=1.0, color="#444444")
+    ax_z.axhline(sigma, color="#d62728", ls="--", lw=0.9)
+    ax_z.axhline(-sigma, color="#d62728", ls="--", lw=0.9)
+    ax_z.set_ylabel("Rolling z")
+    ax_z.set_xlabel("Billing date")
+    ax_z.grid(alpha=0.3)
+
+    fig.autofmt_xdate(rotation=30)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def main(args: argparse.Namespace) -> None:
@@ -77,9 +121,11 @@ def main(args: argparse.Namespace) -> None:
     # Detect
     alert_rows = []
     summary_rows = []
+    case_cache = {}
 
     for label, series in daily_dict.items():
         z_scores, alerts = rolling_zscore(series, window=args.window, sigma=args.sigma)
+        case_cache[label] = (series, z_scores, alerts)
         flagged = series[alerts]
         n_alerts = int(alerts.sum())
 
@@ -124,6 +170,26 @@ def main(args: argparse.Namespace) -> None:
     print(f"\nDone.  Alerts:  {alerts_path}")
     print(f"       Summary: {summary_path}")
 
+    if args.figure_dir:
+        figure_dir = Path(args.figure_dir)
+        figure_dir.mkdir(parents=True, exist_ok=True)
+        case_services = args.case_study_service or [
+            "AWS / Compute",
+            "Microsoft / Networking",
+        ]
+        for service in case_services:
+            if service not in case_cache:
+                print(f"       Case study skipped (missing service): {service}")
+                continue
+            series, z_scores, alerts = case_cache[service]
+            fname = f"{args.output_prefix}_case_{_safe_label(service)}.png"
+            _plot_case_study(
+                service, series, z_scores, alerts,
+                sigma=args.sigma,
+                save_path=figure_dir / fname,
+            )
+            print(f"       Case study figure: {figure_dir / fname}")
+
     # Print summary table
     cols = ["service", "days_observed", "mean_daily_cost", "alert_count", "alert_rate"]
     print("\n-- Per-service summary --")
@@ -158,5 +224,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output-prefix", default="focus_unsupervised",
         help="Prefix for alerts/summary CSV files under outputs/results",
+    )
+    parser.add_argument(
+        "--figure-dir", default=None,
+        help="Optional directory for raw FOCUS case-study figures",
+    )
+    parser.add_argument(
+        "--case-study-service",
+        action="append",
+        default=None,
+        help=(
+            "Service label to plot as a raw-data case study. Can be repeated. "
+            "Defaults to AWS / Compute and Microsoft / Networking when --figure-dir is set."
+        ),
     )
     main(parser.parse_args())

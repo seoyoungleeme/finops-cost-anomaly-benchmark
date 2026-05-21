@@ -116,6 +116,7 @@ def inject_anomalies(
     gradual_levels=GRADUAL_LEVELS,
     n_events_low=N_EVENTS_LOW,
     n_events_high=N_EVENTS_HIGH,
+    n_events_per_combo=0,
     gradual_min_days=7,
     gradual_max_days=14,
     seed=RANDOM_SEED,
@@ -128,16 +129,22 @@ def inject_anomalies(
         - 이벤트끼리 서로 겹치지 않는다 (양쪽 buffer 포함).
         - 각 (anomaly_type, intensity_level) 조합당 n_events_low~n_events_high 회 주입.
         - 슬롯 탐색 실패 시 해당 시도는 건너뛴다.
+        - 주입 순서: gradual(high→mid→low) → contextual → spike.
+          긴 gradual 이벤트를 먼저 배치해 고강도 gradual이 공간 부족으로
+          누락되는 체계적 편향을 방지한다.
 
     Parameters
     ----------
-    y_actual          : (n,) 노이즈 포함 정상 시계열
-    y_expected        : (n,) 노이즈 제외 ground-truth baseline
-    year2_start       : Year 2 시작 day index
-    spike_levels      : {"low": 0.30, "mid": 1.00, "high": 3.00}
-    contextual_levels : {"low": 0.50, "mid": 1.00, "high": 2.00}
-    gradual_levels    : {"low": 0.03, "mid": 0.05, "high": 0.10}
-    seed              : 재현성용 난수 시드
+    y_actual           : (n,) 노이즈 포함 정상 시계열
+    y_expected         : (n,) 노이즈 제외 ground-truth baseline
+    year2_start        : Year 2 시작 day index
+    spike_levels       : {"low": 0.30, "mid": 1.00, "high": 3.00}
+    contextual_levels  : {"low": 0.50, "mid": 1.00, "high": 2.00}
+    gradual_levels     : {"low": 0.03, "mid": 0.05, "high": 0.10}
+    n_events_per_combo : 0이면 [n_events_low, n_events_high)에서 난수 샘플.
+                         양수이면 조합당 정확히 이 수만큼 주입하여
+                         intensity별 이벤트 수를 균등하게 고정한다.
+    seed               : 재현성용 난수 시드
 
     Returns
     -------
@@ -151,6 +158,7 @@ def inject_anomalies(
     events_df      : 이벤트 메타 DataFrame
                      [event_id, anomaly_type, intensity_level,
                       start_day, end_day, total_excess_cost]
+    placement_report : dict {(type, level): {"target": int, "placed": int}}
     """
     # 주입 단계의 난수는 baseline 생성 단계와 분리되도록 offset을 둔다.
     rng = np.random.default_rng(seed + 10_000)
@@ -191,11 +199,54 @@ def inject_anomalies(
         hi = min(n, start + length + buffer)
         occupied[lo:hi] = True
 
-    # ---------- 1) Spike ----------
-    # 1~2일 급격 증가. baseline 대비 +mult.
+    def _n_inject_for_combo():
+        if n_events_per_combo > 0:
+            return n_events_per_combo
+        return int(rng.integers(n_events_low, n_events_high))
+
+    placement_report: dict = {}
+
+    # ---------- 1) Gradual (high → mid → low) ----------
+    # Injected FIRST so long events (7-14 days + buffer) claim space before
+    # spike/contextual fills up Year 2 with many short events.  Without this
+    # ordering, gradual-high is systematically under-placed (~0.3 events/run
+    # vs. ~4.7 for gradual-low) because contiguous slots are exhausted by the
+    # time high-intensity gradual events are attempted.
+    for level in ("high", "mid", "low"):
+        daily_pct = gradual_levels[level]
+        target = _n_inject_for_combo()
+        placed = 0
+        for _ in range(target):
+            length = int(rng.integers(gradual_min_days, gradual_max_days + 1))
+            start = _find_slot(length, buffer=3, max_tries=500)
+            if start is None:
+                continue
+            for k in range(length):
+                idx = start + k
+                add = y_expected[idx] * daily_pct * (k + 1)
+                y_modified[idx] = y_actual[idx] + add
+                injected_cost[idx] = add
+                is_anomaly[idx] = True
+                anomaly_type[idx] = "gradual"
+                intensity_level[idx] = level
+                event_id_arr[idx] = next_event_id
+            _mark_occupied(start, length, buffer=3)
+            events.append({
+                "event_id": next_event_id,
+                "anomaly_type": "gradual",
+                "intensity_level": level,
+                "start_day": start,
+                "end_day": start + length - 1,
+            })
+            next_event_id += 1
+            placed += 1
+        placement_report[("gradual", level)] = {"target": target, "placed": placed}
+
+    # ---------- 2) Spike ----------
     for level, mult in spike_levels.items():
-        n_inject = int(rng.integers(n_events_low, n_events_high))
-        for _ in range(n_inject):
+        target = _n_inject_for_combo()
+        placed = 0
+        for _ in range(target):
             length = int(rng.integers(1, 3))     # 1 또는 2일
             start = _find_slot(length, buffer=2)
             if start is None:
@@ -218,13 +269,15 @@ def inject_anomalies(
                 "end_day": start + length - 1,
             })
             next_event_id += 1
+            placed += 1
+        placement_report[("spike", level)] = {"target": target, "placed": placed}
 
-    # ---------- 2) Contextual ----------
-    # 주말에 주중 수준 비용. 주말 baseline 대비 +mult.
-    # 토요일에서 시작, 길이 1 또는 2 (Sat 또는 Sat+Sun).
+    # ---------- 3) Contextual ----------
+    # 주말에 주중 수준 비용. 토요일에서 시작, 길이 1 또는 2 (Sat 또는 Sat+Sun).
     for level, mult in contextual_levels.items():
-        n_inject = int(rng.integers(n_events_low, n_events_high))
-        for _ in range(n_inject):
+        target = _n_inject_for_combo()
+        placed = 0
+        for _ in range(target):
             length = int(rng.integers(1, 3))
             start = _find_slot(length, buffer=2, weekend_start=True)
             if start is None:
@@ -247,34 +300,19 @@ def inject_anomalies(
                 "end_day": start + length - 1,
             })
             next_event_id += 1
+            placed += 1
+        placement_report[("contextual", level)] = {"target": target, "placed": placed}
 
-    # ---------- 3) Gradual ----------
-    # 7~14일 동안 일일 누적 +daily_pct. day k 시점 추가량 = baseline * daily_pct * (k+1).
-    for level, daily_pct in gradual_levels.items():
-        n_inject = int(rng.integers(n_events_low, n_events_high))
-        for _ in range(n_inject):
-            length = int(rng.integers(gradual_min_days, gradual_max_days + 1))
-            start = _find_slot(length, buffer=3)
-            if start is None:
-                continue
-            for k in range(length):
-                idx = start + k
-                add = y_expected[idx] * daily_pct * (k + 1)
-                y_modified[idx] = y_actual[idx] + add
-                injected_cost[idx] = add
-                is_anomaly[idx] = True
-                anomaly_type[idx] = "gradual"
-                intensity_level[idx] = level
-                event_id_arr[idx] = next_event_id
-            _mark_occupied(start, length, buffer=3)
-            events.append({
-                "event_id": next_event_id,
-                "anomaly_type": "gradual",
-                "intensity_level": level,
-                "start_day": start,
-                "end_day": start + length - 1,
-            })
-            next_event_id += 1
+    # Warn when any combo falls short of its target by more than 20 %
+    import warnings as _warnings
+    for (atype, alevel), pr in placement_report.items():
+        if pr["target"] > 0 and pr["placed"] < pr["target"] * 0.8:
+            _warnings.warn(
+                f"inject_anomalies: ({atype}, {alevel}) placed {pr['placed']}/{pr['target']} "
+                "events (>20 % failure). Consider reducing n_events or increasing Year-2 window.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     # ---------- excess_cost / event total ----------
     # observed residual: 관측-기대값 (noise 포함, 호환성 위해 유지)
@@ -293,13 +331,14 @@ def inject_anomalies(
     )
 
     return (
-    y_modified, excess_cost, cost_impact,
-    is_anomaly, anomaly_type, intensity_level, event_id_arr,
-    events_df,
+        y_modified, excess_cost, cost_impact,
+        is_anomaly, anomaly_type, intensity_level, event_id_arr,
+        events_df,
+        placement_report,
     )
 
 def build_dataset(seed=RANDOM_SEED, n_days=N_DAYS, year2_start=YEAR2_START,
-                  start_date=START_DATE):
+                  start_date=START_DATE, n_events_per_combo=0):
     """
     합성 데이터셋 한 벌(시계열 + event table)을 생성하여 표준 형태로 반환한다.
 
@@ -321,10 +360,11 @@ def build_dataset(seed=RANDOM_SEED, n_days=N_DAYS, year2_start=YEAR2_START,
     )
 
     # 2) 이상 주입
-    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df) = inject_anomalies(
-    y_actual, y_expected,
-    year2_start=year2_start,
-    seed=seed,
+    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df, _) = inject_anomalies(
+        y_actual, y_expected,
+        year2_start=year2_start,
+        n_events_per_combo=n_events_per_combo,
+        seed=seed,
     )
 
     # 3) 표준 DataFrame 구성
@@ -401,7 +441,7 @@ def build_focus_real_dataset(
     y_actual = series.values.astype(float)
     y_expected = y_actual.copy()  # 실제 데이터가 곧 주입 전 baseline
 
-    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df) = inject_anomalies(
+    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df, _) = inject_anomalies(
         y_actual, y_expected,
         year2_start=year2_start,
         n_events_low=n_events_low,
@@ -437,6 +477,7 @@ def build_focus_calibrated_dataset(
     n_days=N_DAYS,
     year2_start=YEAR2_START,
     start_date=START_DATE,
+    n_events_per_combo=0,
 ):
     """Build a benchmark dataset using statistics calibrated from real FOCUS data.
 
@@ -466,9 +507,10 @@ def build_focus_calibrated_dataset(
         weekly_factor=stats.get("weekly_factor"),
     )
 
-    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df) = inject_anomalies(
+    (y_mod, excess, cost_imp, is_anom, a_type, a_int, ev_id, events_df, _) = inject_anomalies(
         y_actual, y_expected,
         year2_start=year2_start,
+        n_events_per_combo=n_events_per_combo,
         seed=seed,
     )
 

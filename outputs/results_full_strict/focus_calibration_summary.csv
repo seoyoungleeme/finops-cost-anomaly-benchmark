@@ -1,7 +1,11 @@
 parameter,n_services,mean,median,std,min,max
 base_level,4,63.419,39.3547,55.3743,18.5,156.4667
+monthly_growth_raw,4,0.3098,0.6034,0.9319,-1.2176,1.25
 monthly_growth,4,0.07,0.1,0.052,-0.02,0.1
+monthly_growth_saturated,4,1.0,1.0,0.0,1.0,1.0
+noise_pct_raw,4,1.0063,1.1293,0.4556,0.3107,1.4558
 noise_pct,4,0.15,0.15,0.0,0.15,0.15
+noise_pct_saturated,4,1.0,1.0,0.0,1.0,1.0
 days_observed,4,30.0,30.0,0.0,30.0,30.0
 nonzero_days,4,21.25,20.0,5.4943,15.0,30.0
 used_fallback,4,0.0,0.0,,0.0,1.0

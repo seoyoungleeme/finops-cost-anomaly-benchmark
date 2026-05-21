@@ -41,13 +41,15 @@ METRIC_COLS = [
     "threshold", "total_alerts", "false_alarm_rate",
     "precision", "recall", "f1", "auprc",
     "event_recall", "mean_detection_delay",
-    "cost_weighted_recall", "mean_mctd", "alert_cost_efficiency",
+    "cost_weighted_recall", "mean_mctd", "cost_to_detect_ratio",
+    "avoided_cost_ratio", "alert_cost_efficiency",
 ]
 
 EVENT_KEEP_COLS = [
     "seed", "year1_fpr_target", "model_name", "event_id",
     "anomaly_type", "intensity_level",
     "detected", "detection_delay", "total_excess_cost", "mctd",
+    "normalized_mctd",
 ]
 
 # FOCUS real-data integration
@@ -69,6 +71,7 @@ FOCUS_REAL_MIN_YEAR2_DAYS = 10    # minimum Year 2 evaluation days
 PAPER_DPI = 200
 PAPER_COLOR_MAP = {
     "EWMA": "#1f77b4",
+    "SeasonalNaiveMAD": "#8c564b",
     "IsolationForest": "#d62728",
     "LSTM_AE": "#2ca02c",
     "Prophet": "#9467bd",

@@ -6,7 +6,7 @@ Approach A - calibrated synthetic:
   3. Extract per-group statistics (trend, noise, DoW pattern).
   4. Generate 730-day synthetic baselines with those real-world parameters.
   5. Inject synthetic anomalies, preserving ground-truth labels.
-  6. Run EWMA / IsolationForest / Prophet / LSTM-AE across seeds & budgets.
+  6. Run EWMA / SeasonalNaiveMAD / IsolationForest / Prophet / LSTM-AE across seeds & budgets.
   7. Save per-service metrics and cross-service summary tables.
 
 Output files (all in outputs/results/):
@@ -79,7 +79,8 @@ from finops_benchmark.visualization import (
 _EVAL_FAR_TARGET = 0.01   # primary year-1 FAR target for summary tables
 _SUMMARY_METRICS = [
     "f1", "auprc", "cost_weighted_recall",
-    "mean_mctd", "alert_cost_efficiency", "false_alarm_rate",
+    "mean_mctd", "cost_to_detect_ratio", "avoided_cost_ratio",
+    "alert_cost_efficiency", "false_alarm_rate",
 ]
 
 # Rank metrics: (column_in_rank_reversal_df, ascending)
@@ -148,11 +149,50 @@ def _collect_library_versions() -> dict:
     return versions
 
 
+def _build_injection_balance_warnings(
+    per_service_events: dict,
+    year1_fpr_target: float = _EVAL_FAR_TARGET,
+) -> list[str]:
+    """Check intensity distribution and flag cells with < 30 % of median count for their type.
+
+    Gradual-high is the historically problematic cell: with the old injection order
+    (spike → contextual → gradual), Year-2 slots were exhausted before gradual-high
+    had a chance, leaving it with ~0.3 events/run vs ~4.7 for gradual-low.
+    """
+    import numpy as np
+
+    if not per_service_events:
+        return []
+
+    all_ev = pd.concat(list(per_service_events.values()), ignore_index=True)
+    if "year1_fpr_target" in all_ev.columns:
+        all_ev = all_ev[all_ev["year1_fpr_target"] == year1_fpr_target]
+
+    warnings_out: list[str] = []
+    for atype in sorted(all_ev["anomaly_type"].unique()):
+        counts = all_ev[all_ev["anomaly_type"] == atype].groupby("intensity_level").size()
+        if counts.empty:
+            continue
+        median_count = float(np.median(counts.values))
+        for level, cnt in counts.items():
+            if median_count > 0 and cnt < median_count * 0.3:
+                warnings_out.append(
+                    f"Intensity imbalance: ({atype}, {level}) has only {int(cnt)} events "
+                    f"vs. median {median_count:.0f} for {atype}. "
+                    "Conclusions for this cell are unreliable."
+                )
+    return warnings_out
+
+
 def _build_calibration_summary(stats_all: dict) -> pd.DataFrame:
     """Cross-service summary statistics for calibration parameters."""
     import numpy as np
 
-    scalar_keys = ["base_level", "monthly_growth", "noise_pct", "days_observed", "nonzero_days"]
+    scalar_keys = [
+        "base_level", "monthly_growth_raw", "monthly_growth",
+        "monthly_growth_saturated", "noise_pct_raw", "noise_pct",
+        "noise_pct_saturated", "days_observed", "nonzero_days",
+    ]
     rows = []
     for key in scalar_keys:
         vals = [s[key] for s in stats_all.values() if key in s and s[key] != ""]
@@ -180,6 +220,50 @@ def _build_calibration_summary(stats_all: dict) -> pd.DataFrame:
         "max": 1,
     })
     return pd.DataFrame(rows)
+
+
+def _build_overall_model_ranking_with_std(
+    all_metrics_df: pd.DataFrame,
+    year1_fpr_target: float = _EVAL_FAR_TARGET,
+) -> pd.DataFrame:
+    """Overall model table with pooled mean/std across service x seed cells."""
+    metrics = [
+        "f1", "cost_weighted_recall", "alert_cost_efficiency",
+        "mean_mctd", "cost_to_detect_ratio", "avoided_cost_ratio",
+    ]
+    sub = all_metrics_df[all_metrics_df["year1_fpr_target"] == year1_fpr_target]
+    grouped = sub.groupby("model_name")[metrics].agg(["mean", "std"])
+    grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]
+    out = grouped.reset_index()
+    out["n_cells"] = sub.groupby("model_name").size().reindex(out["model_name"]).values
+
+    out["f1_rank"] = out["f1_mean"].rank(ascending=False, method="min").astype(int)
+    out["dollar_recall_rank"] = (
+        out["cost_weighted_recall_mean"].rank(ascending=False, method="min").astype(int)
+    )
+    out["ace_rank"] = (
+        out["alert_cost_efficiency_mean"].rank(ascending=False, method="min").astype(int)
+    )
+    out["mctd_rank"] = out["mean_mctd_mean"].rank(ascending=True, method="min").astype(int)
+    out["ctdr_rank"] = (
+        out["cost_to_detect_ratio_mean"].rank(ascending=True, method="min").astype(int)
+    )
+    out["avoided_cost_rank"] = (
+        out["avoided_cost_ratio_mean"].rank(ascending=False, method="min").astype(int)
+    )
+
+    col_order = [
+        "model_name",
+        "f1_mean", "f1_std",
+        "cost_weighted_recall_mean", "cost_weighted_recall_std",
+        "alert_cost_efficiency_mean", "alert_cost_efficiency_std",
+        "mean_mctd_mean", "mean_mctd_std",
+        "cost_to_detect_ratio_mean", "cost_to_detect_ratio_std",
+        "avoided_cost_ratio_mean", "avoided_cost_ratio_std",
+        "n_cells", "f1_rank", "dollar_recall_rank", "ace_rank",
+        "mctd_rank", "ctdr_rank", "avoided_cost_rank",
+    ]
+    return out[col_order].sort_values("f1_rank").reset_index(drop=True).round(4)
 
 
 def _build_rank_reversal_summary(rank_reversal_df: pd.DataFrame) -> pd.DataFrame:
@@ -276,12 +360,16 @@ def _build_anomaly_type_tables(
         mean_mctd = float(grp["mctd"].mean())
         tot_cost = float(grp["total_excess_cost"].sum())
         det_cost = float(grp.loc[grp["detected"], "total_excess_cost"].sum())
+        total_mctd = float(grp["mctd"].sum())
         dollar_recall = det_cost / tot_cost if tot_cost > 0 else 0.0
+        cost_to_detect_ratio = total_mctd / tot_cost if tot_cost > 0 else 0.0
         return pd.Series({
             "n_events": n,
             "detection_rate": round(det_rate, 4),
             "mean_detection_delay": round(mean_delay, 2),
             "mean_mctd": round(mean_mctd, 4),
+            "cost_to_detect_ratio": round(cost_to_detect_ratio, 4),
+            "avoided_cost_ratio": round(1.0 - cost_to_detect_ratio, 4),
             "dollar_recall": round(dollar_recall, 4),
         })
 
@@ -416,7 +504,10 @@ def main(args: argparse.Namespace) -> None:
     print(f"  Loaded from {path}")
     source_column_count = int(pd.read_csv(path, nrows=0).shape[1])
     raw_df = load_focus_data(str(path))
-    print(f"  Rows: {len(raw_df):,}  |  Columns: {raw_df.shape[1]}")
+    print(
+        f"  Rows: {len(raw_df):,}  |  Source columns: {source_column_count}  "
+        f"| Loaded columns incl. helper fields: {raw_df.shape[1]}"
+    )
 
     # Snapshot the source inventory so reviewers can verify report data claims
     # (rows, columns, date range, providers) without rerunning the load.
@@ -485,6 +576,32 @@ def main(args: argparse.Namespace) -> None:
         )
 
     interpretation_warnings = _build_interpretation_warnings(stats_all)
+
+    # Surface clipping saturation in warnings so reviewers know which parameters
+    # are bounds-driven rather than data-driven.
+    n_mg_sat = sum(
+        1 for st in stats_all.values()
+        if not st.get("used_fallback") and st.get("monthly_growth_raw") is not None
+        and (st["monthly_growth_raw"] <= -0.02 or st["monthly_growth_raw"] >= 0.10)
+    )
+    n_np_sat = sum(
+        1 for st in stats_all.values()
+        if not st.get("used_fallback") and st.get("noise_pct_raw") is not None
+        and (st["noise_pct_raw"] <= 0.01 or st["noise_pct_raw"] >= 0.15)
+    )
+    if n_mg_sat > 0:
+        interpretation_warnings.append(
+            f"{n_mg_sat}/{len(stats_all)} service(s) have monthly_growth clipped at a bound "
+            "(raw estimate outside [-0.02, 0.10]). The synthetic trend may not reflect "
+            "the true FOCUS trend magnitude."
+        )
+    if n_np_sat > 0:
+        interpretation_warnings.append(
+            f"{n_np_sat}/{len(stats_all)} service(s) have noise_pct clipped at a bound "
+            "(raw estimate outside [0.01, 0.15]). The synthetic baseline may be smoother "
+            "than the real FOCUS series."
+        )
+
     if interpretation_warnings:
         print("\nInterpretation warnings:")
         for warning in interpretation_warnings:
@@ -497,7 +614,7 @@ def main(args: argparse.Namespace) -> None:
     # 4. Run benchmark
     print(
         f"\nStep 4/5  Running benchmark "
-        f"({args.n_seeds} seeds x {len(BUDGETS)} budgets x 4 models)..."
+        f"({args.n_seeds} seeds x {len(BUDGETS)} budgets x 5 models)..."
     )
     per_service_metrics: dict = {}
     summary_rows = []
@@ -508,7 +625,8 @@ def main(args: argparse.Namespace) -> None:
 
         for seed in SEEDS[: args.n_seeds]:
             m, e = run_one_seed_focus(
-                seed=seed, stats=stats, budgets=BUDGETS, verbose=args.verbose
+                seed=seed, stats=stats, budgets=BUDGETS, verbose=args.verbose,
+                n_events_per_combo=args.n_events_per_combo,
             )
             metrics_parts.append(m)
             events_parts.append(e)
@@ -576,6 +694,12 @@ def main(args: argparse.Namespace) -> None:
     overall_ranking = build_rank_comparison(all_metrics_pooled, year1_fpr_target=_EVAL_FAR_TARGET)
     overall_ranking.to_csv(
         output_dir / "focus_overall_model_ranking.csv", index=False
+    )
+    overall_ranking_with_std = _build_overall_model_ranking_with_std(
+        all_metrics_pooled, year1_fpr_target=_EVAL_FAR_TARGET
+    )
+    overall_ranking_with_std.to_csv(
+        output_dir / "focus_overall_model_ranking_with_std.csv", index=False
     )
     print("\n  Overall model ranking (pooled across all services, year-1 FAR target=1%):")
     print(overall_ranking[["model_name", "f1", "f1_rank", "cost_weighted_recall"]].to_string(index=False))
@@ -721,6 +845,7 @@ def main(args: argparse.Namespace) -> None:
             "BUDGETS": BUDGETS,
             "FOCUS_GROUP_BY": FOCUS_GROUP_BY,
             "eval_far_target": _EVAL_FAR_TARGET,
+            "n_events_per_combo": args.n_events_per_combo,
         },
         "study_type": "focus_calibrated_synthetic",
         "real_data_claim": (
@@ -732,6 +857,7 @@ def main(args: argparse.Namespace) -> None:
         "n_fallback_services": n_fallback_services,
         "services": list(stats_all.keys()),
         "interpretation_warnings": interpretation_warnings,
+        "injection_balance_warnings": _build_injection_balance_warnings(per_service_events),
         "output_figures": fig_specs,
     }
     meta_path = output_dir / "focus_run_metadata.json"
@@ -776,4 +902,13 @@ if __name__ == "__main__":
         help="Directory for generated figures; defaults to a figures sibling of --output-dir",
     )
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--n-events-per-combo",
+        type=int,
+        default=0,
+        help=(
+            "If >0, inject exactly this many events per anomaly type x intensity "
+            "combination. Default 0 preserves the historical random [low, high) count."
+        ),
+    )
     main(parser.parse_args())

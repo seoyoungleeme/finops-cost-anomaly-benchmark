@@ -111,6 +111,58 @@ def score_with_ewma(df, events_df=None, seed=RANDOM_SEED,
     })
     return out
 
+
+def score_with_seasonal_naive_mad(
+    df,
+    events_df=None,
+    seed=RANDOM_SEED,
+    year2_start=YEAR2_START,
+    seasonal_lag=7,
+    history_weeks=8,
+    min_history=3,
+    fallback_window=28,
+    eps=1e-6,
+):
+    """Same-day-of-week median baseline with robust MAD scaling.
+
+    This is a practical FinOps-style baseline: compare today's cost to prior
+    observations from the same day of week, then score the robust deviation.
+    It is deliberately simple, streaming-friendly, and look-ahead-free.
+    """
+    y = df["y"].values.astype(float)
+    n = len(y)
+    score = np.full(n, np.nan, dtype=float)
+
+    for t in range(n):
+        same_dow_idx = [
+            t - seasonal_lag * k
+            for k in range(1, history_weeks + 1)
+            if t - seasonal_lag * k >= 0
+        ]
+        hist = y[same_dow_idx]
+
+        if len(hist) < min_history:
+            start = max(0, t - fallback_window)
+            hist = y[start:t]
+
+        if len(hist) < min_history:
+            continue
+
+        med = float(np.median(hist))
+        mad = float(np.median(np.abs(hist - med)))
+        scale = 1.4826 * mad
+        if scale < eps:
+            scale = float(np.std(hist) + eps)
+        score[t] = abs(y[t] - med) / scale
+
+    out = pd.DataFrame({
+        "model_name": "SeasonalNaiveMAD",
+        "date": df["date"].values,
+        "day": df["day"].values,
+        "score": score,
+    })
+    return out
+
 def _build_if_features(df, year2_start=YEAR2_START):
     """
     Isolation Forest용 피처 행렬을 구성한다.
@@ -426,10 +478,10 @@ def score_with_lstm_ae(df, events_df=None, seed=RANDOM_SEED,
     return out
 
 def run_all_models(df, events_df, seed=RANDOM_SEED, year2_start=YEAR2_START,
-                   include=("EWMA", "IsolationForest", "Prophet", "LSTM_AE"),
+                   include=("EWMA", "SeasonalNaiveMAD", "IsolationForest", "Prophet", "LSTM_AE"),
                    verbose=False):
     """
-    4개 모델의 score를 일괄 계산하여 long-format DataFrame으로 합친다.
+    모델들의 score를 일괄 계산하여 long-format DataFrame으로 합친다.
 
     Returns
     -------
@@ -444,6 +496,13 @@ def run_all_models(df, events_df, seed=RANDOM_SEED, year2_start=YEAR2_START,
             print("[EWMA] scoring ...")
         parts.append(score_with_ewma(df, events_df, seed=seed,
                                      year2_start=year2_start))
+
+    if "SeasonalNaiveMAD" in include:
+        if verbose:
+            print("[SeasonalNaiveMAD] scoring ...")
+        parts.append(score_with_seasonal_naive_mad(
+            df, events_df, seed=seed, year2_start=year2_start
+        ))
 
     if "IsolationForest" in include:
         if verbose:
